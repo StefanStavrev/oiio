@@ -56,6 +56,10 @@ OIIO_NAMESPACE_ENTER
 
 class Filter2D;  // forward declaration
 
+namespace Composite {
+enum DLLPUBLIC Op {Over=1, In=2, Out=3, Atop=4, Xor=5};
+}
+
 namespace ImageBufAlgo {
 
 /// Zero out (set to 0, black) the entire image.
@@ -307,51 +311,59 @@ bool DLLPUBLIC capture_image (ImageBuf &dst, int cameranum = 0,
 
 
 
-/// Set R to the composite of A over B using the Porter/Duff definition
-/// of "over", returning true upon success and false for any of a
-/// variety of failures (as described below).  All three buffers must
-/// have 'float' pixel data type.
+/// ImageBufAlgo::composite --------------------------------------------------
+/// Parameters:
+/// R               - Output image R.
+/// A, B            - Input images A and B.
+/// PD              - Specifies one of the Porter-Duff operations
+///                   {Over, In, Out, Atop, Xor}.
+/// roi             - The operation will be applied only in this region.
+/// threads         - Number of threads to use.
 ///
-/// A and B must have valid alpha channels identified by their ImageSpec
-/// alpha_channel field, with the following two exceptions: (a) a
-/// 3-channel image with no identified alpha will be assumed to be RGB,
-/// alpha == 1.0; (b) a 4-channel image with no identified alpha will be
-/// assumed to be RGBA with alpha in channel [3].  If A or B do not have
-/// alpha channels (as determined by those rules) or if the number of
-/// non-alpha channels do not match between A and B, over() will fail,
-/// returning false.
-///
-/// R is not already an initialized ImageBuf, it will be sized to
-/// encompass the minimal rectangular pixel region containing the union
-/// of the defined pixels of A and B, and with a number of channels
-/// equal to the number of non-alpha channels of A and B, plus an alpha
-/// channel.  However, if R is already initialized, it will not be
-/// resized, and the "over" operation will apply to its existing pixel
-/// data window.  In this case, R must have an alpha channel designated
-/// and must have the same number of non-alpha channels as A and B,
-/// otherwise it will fail, returning false.
-///
-/// 'roi' specifies the region of R's pixels which will be computed;
-/// existing pixels outside this range will not be altered.  If not
-/// specified, the default ROI value will be interpreted as a request to
-/// apply "A over B" to the entire region of R's pixel data.
-///
-/// A, B, and R need not perfectly overlap in their pixel data windows;
-/// pixel values of A or B that are outside their respective pixel data
-/// window will be treated as having "zero" (0,0,0...) value.
-///
-/// threads == 0, the default, indicates that over() should use as many
-/// CPU threads as are specified by the global OIIO "threads" attribute.
-/// Note that this is not a guarantee, for example, the implementation
-/// may choose to spawn fewer threads for images too small to make a
-/// large number of threads to be worthwhile.  Values of threads > 0 are
-/// a request for that specific number of threads, with threads == 1
-/// guaranteed to not spawn additional threads (this is especially
-/// useful if over() is being called from one thread of an
-/// already-multithreaded program).
-bool DLLPUBLIC over (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
-                     ROI roi = ROI(), int threads = 0);
-
+/// More details:
+/// - All three image buffers R, A and B, must have float pixel data type.
+/// - The operation may fail for the following reasons:
+///     1. A or B has a Z channel.
+///     2. A and B have different number of non-alpha channels.
+///     3. A or B has number of channels different than 3 and 4,
+///        and does not have an alpha channel specified.
+///     4. A or B has less than 2 channels.
+///     5. R has number of non-alpha channels different than 3 or it has alpha
+///        channel specified different than 3, for the cases where either A
+///        or B does not have an alpha channel, or they both don't have one.
+///     6. R has different number of non-alpha channels or different alpha
+///        channel than A/B, for the case where both A and B have matching
+///        alpha channels, and same number of non-alpha channels.
+/// - A and B must have valid alpha channels specified by their ImageSpec
+///   alpha_channel field, with the following two exceptions: (a) 3-channel
+///   image with alpha_channel not specified is assumed to be RGB with alpha
+///   values 1 for all pixels, (b) 4-channel image with alpha_channel not
+///   specified is assumed to be RGBA with alpha_channel 3.
+/// - Pixels outside the region specified by roi will not be modified. If roi
+///   is not defined (! roi.defined) then the operation will be applied to the
+///   entire region of R's pixel data.
+/// - A and B may not overlap in their pixel data windows, and in that case
+///   pixel values of A and B outside their respective pixel data window will
+///   be treated as fully transparent (0,0,0,...).
+/// - R can be initialized or not. If initialized, then the operation will be
+///   applied to its entire pixel data window. In this case, R must have
+///   an alpha channel specified and the same number of non-alpha channels as
+///   A and B, otherwise false is returned and the operation fails. In the
+///   case where R is not initialized, it will be modified to encompass
+///   the minimal rectangular pixel region containing the union of the
+///   defined pixels of A and B. Also the number of channels and alpha channel
+///   will be set accordingly.
+/// - If (threads == 0), the default, then that many CPU threads will be used
+///   as specified by the global OIIO "threads" attribute. But fewer threads
+///   may be spawned for images too small to make a large number of threads
+///   worthwhile. Values (threads > 0) are a request for that specific number
+///   of threads. If (threads == 1) then exactly one thread will be spawned,
+///   which is useful if the operation is called from one thread in an
+///   already multithreaded program.
+/// --------------------------------------------------------------------------
+bool DLLPUBLIC composite (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
+                          Composite::Op PD = Composite::Over, ROI roi = ROI(),
+                          int threads = 0);
 
 
 

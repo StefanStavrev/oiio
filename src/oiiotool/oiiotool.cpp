@@ -1397,31 +1397,41 @@ action_fixnan (int argc, const char *argv[])
 
 
 static int
-action_over (int argc, const char *argv[])
+action_composite (int argc, const char *argv[])
 {
-    if (ot.postpone_callback (2, action_over, argc, argv))
+    if (ot.postpone_callback (2, action_composite, argc, argv))
         return 0;
 
     ImageRecRef B (ot.pop());
     ImageRecRef A (ot.pop());
     ot.read (A);
     ot.read (B);
-    const ImageBuf &Aib ((*A)());
-    const ImageBuf &Bib ((*B)());
-    const ImageSpec &specA = Aib.spec();
-    const ImageSpec &specB = Bib.spec();
+    ImageBuf &Aib ((*A)());
+    ImageBuf &Bib ((*B)());
+    ImageSpec &specA = Aib.specmod();
+    //specA.x = 150; specA.y = 150;
+    ImageSpec &specB = Bib.specmod();
+    //specB.x = 0; specB.y = 0;
 
     // Create output image specification.
-    ImageSpec specR = specA;
-    set_roi (specR, roi_union (get_roi(specA), get_roi(specB)));
-    specR.nchannels = std::max (specA.nchannels, specB.nchannels);
-    if (specR.alpha_channel < 0 && specR.nchannels == 4)
+    int has_alpha_A = (specA.alpha_channel >= 0);
+    int has_alpha_B = (specB.alpha_channel >= 0);
+    int maxc = std::max (specA.nchannels, specB.nchannels);
+    int c = (! has_alpha_A && ! has_alpha_B) ? maxc+1 : maxc;
+    ROI r = roi_union (get_roi(specA), get_roi(specB));
+    ImageSpec specR (r.width(), r.height(), c, TypeDesc::FLOAT);
+    if (! has_alpha_A || ! has_alpha_B)
         specR.alpha_channel = 3;
+    else
+        specR.alpha_channel = has_alpha_A ? specA.alpha_channel
+                                          : specB.alpha_channel;
 
     ot.push (new ImageRec ("irec", specR, ot.imagecache));
     ImageBuf &Rib ((*ot.curimg)());
 
-    ImageBufAlgo::over (Rib, Aib, Bib);
+    int i = atoi (argv[1]);
+    ImageBufAlgo::composite (Rib, Aib, Bib, static_cast<Composite::Op>(i));
+
     return 0;
 }
 
@@ -1501,7 +1511,7 @@ getargs (int argc, char *argv[])
                 "--add %@", action_add, NULL, "Add two images",
                 "--sub %@", action_sub, NULL, "Subtract two images",
                 "--abs %@", action_abs, NULL, "Take the absolute value of the image pixels",
-                "--over %@", action_over, NULL, "'Over' composite of two images",
+                "--composite %@ %d", action_composite, NULL, "Porter-Duff compositing",
                 "--flip %@", action_flip, NULL, "Flip the image vertically (top<->bottom)",
                 "--flop %@", action_flop, NULL, "Flop the image horizontally (left<->right)",
                 "--flipflop %@", action_flipflop, NULL, "Flip and flop the image (180 degree rotation)",

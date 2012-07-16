@@ -1126,34 +1126,54 @@ ImageBufAlgo::fixNonFinite (ImageBuf &dst, const ImageBuf &src,
 
 namespace {   // anonymous namespace
 
-// Fully type-specialized version of over.
+void
+porter_duff (Composite::Op PD, float alpha_a, float alpha_b,
+             float &Fa, float &Fb)
+{
+    switch (PD) {
+    case Composite::Over:   Fa = 1;         Fb = 1-alpha_a;     break;
+    case Composite::In:     Fa = alpha_b;   Fb = 0;             break;
+    case Composite::Out:    Fa = 1-alpha_b; Fb = 0;             break;
+    case Composite::Atop:   Fa = alpha_b;   Fb = 1-alpha_a;     break;
+    case Composite::Xor:    Fa = 1-alpha_b; Fb = 1-alpha_a;     break;
+    }
+}
+
+
+
+// Fully type-specialized version of composite.
 template<class Rtype, class Atype, class Btype>
 bool
-over_impl (ImageBuf &R, const ImageBuf &A, const ImageBuf &B, ROI roi)
+composite_impl (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
+                Composite::Op PD, ROI roi)
 {
+    // Double check ImageBuf types.
     if (R.spec().format != BaseTypeFromC<Rtype>::value ||
         A.spec().format != BaseTypeFromC<Atype>::value ||
         B.spec().format != BaseTypeFromC<Btype>::value)
-        return false;   // double check that types match
+        return false;
 
     // Output image R.
-    const ImageSpec &specR = R.spec();
-    int channels_R = specR.nchannels;
+    int channels_R = R.spec().nchannels;
 
     // Input image A.
-    const ImageSpec &specA = A.spec();
-    int alpha_index_A =  specA.alpha_channel;
+    int alpha_index_A =  A.spec().alpha_channel;
     int has_alpha_A = (alpha_index_A >= 0);
-    int channels_A = specA.nchannels;
+    int channels_A = A.spec().nchannels;
+    bool A3 = (channels_A == 3);
+    bool A3_no_alpha = (! has_alpha_A && A3);
 
     // Input image B.
-    const ImageSpec &specB = B.spec();
-    int alpha_index_B =  specB.alpha_channel;
+    int alpha_index_B =  B.spec().alpha_channel;
     int has_alpha_B = (alpha_index_B >= 0);
-    int channels_B = specB.nchannels;
+    int channels_B = B.spec().nchannels;
+    bool B3 = (channels_B == 3);
+    bool B3_no_alpha = (! has_alpha_B && B3);
 
     int channels_AB = std::min (channels_A, channels_B);
+    bool channels_R_different_AB = (channels_R != channels_AB);
 
+    float Fa = 0, Fb = 0;
     ImageBuf::ConstIterator<Atype, float> a (A);
     ImageBuf::ConstIterator<Btype, float> b (B);
     ImageBuf::Iterator<Rtype, float> r (R, roi);
@@ -1161,34 +1181,35 @@ over_impl (ImageBuf &R, const ImageBuf &A, const ImageBuf &B, ROI roi)
         a.pos (r.x(), r.y(), r.z());
         b.pos (r.x(), r.y(), r.z());
 
+        // There are 4 cases based on iterators a and b being valid or not:
         if (! a.valid()) {
-            if (! b.valid()) {
-                // a and b invalid.
-                for (int c = 0; c < channels_R; c++) { r[c] = 0.0f; }
-            } else {
-                // a invalid, b valid.
-                for (int c = 0; c < channels_B; c++) { r[c] = b[c]; }
-                if (! has_alpha_B) { r[3] = 1.0f; }
+            if (! b.valid()) { // a and b invalid.
+                for (int c = 0; c < channels_R; c++) r[c] = 0.0f;
+            } else { // a invalid, b valid.
+                float alpha_B = has_alpha_B ? b[alpha_index_B] : (B3?1:b[3]);
+                porter_duff (PD, 0, alpha_B, Fa, Fb);
+                for (int c = 0;  c < channels_B;  c++)
+                    r[c] = b[c]*Fb; // r[c] = 0*Fa + b[c]*Fb;
+                if (B3_no_alpha)
+                    r[3] = Fb; // r[3] = 0*Fa + 1*Fb;
             }
-            continue;
-        }
-
-        if (! b.valid()) {
-            // a valid, b invalid.
-            for (int c = 0; c < channels_A; c++) { r[c] = a[c]; }
-            if (! has_alpha_A) { r[3] = 1.0f; }
-            continue;
-        }
-
-        // At this point, a and b are valid.
-        float alpha_A = has_alpha_A 
-                        ? clamp (a[alpha_index_A], 0.0f, 1.0f) : 1.0f;
-        float one_minus_alpha_A = 1.0f - alpha_A;
-        for (int c = 0;  c < channels_AB;  c++)
-            r[c] = a[c] + one_minus_alpha_A * b[c];
-        if (channels_R != channels_AB) {
-            // R has 4 channels, A or B has 3 channels -> alpha channel is 3.
-            r[3] = alpha_A + one_minus_alpha_A * (has_alpha_B ? b[3] : 1.0f);
+        } else {
+            if (! b.valid()) { // a valid, b invalid.
+                float alpha_A = has_alpha_A ? a[alpha_index_A] : (A3?1:a[3]);
+                porter_duff (PD, alpha_A, 0, Fa, Fb);
+                for (int c = 0;  c < channels_A;  c++)
+                    r[c] = a[c]*Fa; // r[c] = a[c]*Fa + 0*Fb;
+                if (A3_no_alpha)
+                    r[3] = Fa; // r[3] = 1*Fa + 0*Fb;
+            } else { // a and b valid.
+                float alpha_A = has_alpha_A ? a[alpha_index_A] : (A3?1:a[3]);
+                float alpha_B = has_alpha_B ? b[alpha_index_B] : (B3?1:b[3]);
+                porter_duff (PD, alpha_A, alpha_B, Fa, Fb);
+                for (int c = 0;  c < channels_AB;  c++)
+                    r[c] = a[c]*Fa + b[c]*Fb;
+                if (channels_R_different_AB)
+                    r[3] = alpha_A*Fa + alpha_B*Fb;
+            }
         }
     }
     return true;
@@ -1197,16 +1218,22 @@ over_impl (ImageBuf &R, const ImageBuf &A, const ImageBuf &B, ROI roi)
 }    // anonymous namespace
 
 
+
 bool
-ImageBufAlgo::over (ImageBuf &R, const ImageBuf &A, const ImageBuf &B, ROI roi,
-                    int nthreads)
+ImageBufAlgo::composite (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
+                         Composite::Op PD, ROI roi, int nthreads)
 {
+    // All image buffers R, A and B must have float pixel data.
+    if (R.spec().format != TypeDesc::TypeFloat ||
+        A.spec().format != TypeDesc::TypeFloat ||
+        B.spec().format != TypeDesc::TypeFloat)
+        return false;
+
     // Output image R.
     const ImageSpec &specR = R.spec();
     int alpha_R =  specR.alpha_channel;
-    int has_alpha_R = (alpha_R >= 0);
     int channels_R = specR.nchannels;
-    int non_alpha_R = channels_R - has_alpha_R;
+    int non_alpha_R = channels_R - (alpha_R >= 0);
     bool initialized_R = R.initialized();
 
     // Input image A.
@@ -1225,43 +1252,36 @@ ImageBufAlgo::over (ImageBuf &R, const ImageBuf &A, const ImageBuf &B, ROI roi,
     int non_alpha_B = has_alpha_B ? (channels_B - 1) : 3;
     bool B_not_34 = channels_B != 3 && channels_B != 4;
 
-    // At present, this operation only supports ImageBuf's containing
-    // float pixel data.
-    if (R.spec().format != TypeDesc::TypeFloat ||
-        A.spec().format != TypeDesc::TypeFloat ||
-        B.spec().format != TypeDesc::TypeFloat)
-        return false;
-
     // Fail if the input images have a Z channel.
     if (specA.z_channel >= 0 || specB.z_channel >= 0)
         return false;
 
-    // If input images A and B have different number of non-alpha channels
-    // then return false.
+    // A and B have different number of non-alpha channels -> return false.
     if (non_alpha_A != non_alpha_B)
         return false;
 
-    // A or B has number of channels different than 3 and 4, and it does
-    // not have an alpha channel.
+    // A or B has number of channels other than 3 and 4, and no alpha channel.
     if ((A_not_34 && !has_alpha_A) || (B_not_34 && !has_alpha_B))
         return false;
 
-    // A or B has zero or one channel -> return false.
-    if (channels_A <= 1 || channels_B <= 1)
+    // A or B has less than 2 channels -> return false.
+    if (channels_A < 2 || channels_B < 2)
         return false;
 
-    // Initialized R -> use as allocated.  
+    // Initialized R -> use as allocated.
     // Uninitialized R -> size it to the union of A and B.
-    ImageSpec newspec = ImageSpec ();
-    ROI union_AB = roi_union (get_roi(specA), get_roi(specB));
-    set_roi (newspec, union_AB);
+    ImageSpec newspec = ImageSpec (specR.format);
+    if (! initialized_R) {
+        ROI union_AB = roi_union (get_roi(specA), get_roi(specB));
+        set_roi (newspec, union_AB);
+    }
     if ((! has_alpha_A && ! has_alpha_B)
         || (has_alpha_A && ! has_alpha_B && alpha_A == channels_A - 1)
         || (! has_alpha_A && has_alpha_B && alpha_B == channels_B - 1)) {
         if (! initialized_R) {
             newspec.nchannels = 4;
             newspec.alpha_channel =  3;
-            R.reset ("over", newspec);
+            R.reset ("dummy", newspec);
         } else {
             if (non_alpha_R != 3 || alpha_R != 3)
                 return false;
@@ -1269,8 +1289,8 @@ ImageBufAlgo::over (ImageBuf &R, const ImageBuf &A, const ImageBuf &B, ROI roi,
     } else if (has_alpha_A && has_alpha_B && alpha_A == alpha_B) {
         if (! initialized_R) {
             newspec.nchannels = channels_A;
-            newspec.alpha_channel =  alpha_A;
-            R.reset ("over", newspec);
+            newspec.alpha_channel = alpha_A;
+            R.reset ("dummy", newspec);
         } else {
             if (non_alpha_R != non_alpha_A || alpha_R != alpha_A)
                 return false;
@@ -1280,12 +1300,12 @@ ImageBufAlgo::over (ImageBuf &R, const ImageBuf &A, const ImageBuf &B, ROI roi,
     }
 
     // Specified ROI -> use it. Unspecified ROI -> initialize from R.
-    if (! roi.defined) {
+    if (! roi.defined)
         roi = get_roi (R.spec());
-    }    
 
-    parallel_image (boost::bind (over_impl<float,float,float>, boost::ref(R),
-                                 boost::cref(A), boost::cref(B), _1),
+    parallel_image (boost::bind (composite_impl<float,float,float>,
+                                 boost::ref(R), boost::cref(A),
+                                 boost::cref(B), PD, _1),
                            roi, nthreads);
     return true;
 }
