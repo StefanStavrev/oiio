@@ -1292,5 +1292,87 @@ ImageBufAlgo::over (ImageBuf &R, const ImageBuf &A, const ImageBuf &B, ROI roi,
 
 
 
+namespace {   // anonymous namespace
+
+// Fully type-specialized version of multiply.
+template<class Rtype, class Atype, class Btype>
+bool
+multiply_impl (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
+               std::vector<int> channels_mask, ROI roi)
+{
+    // Double check types.
+    if (R.spec().format != BaseTypeFromC<Rtype>::value ||
+        A.spec().format != BaseTypeFromC<Atype>::value ||
+        B.spec().format != BaseTypeFromC<Btype>::value)
+        return false;
+
+    // number of input images + output image
+    int images = 3; 
+    // number of channels to write to in R.
+    int result_channels = channels_mask.size() / images;
+
+    ImageBuf::ConstIterator<Atype, float> a (A);
+    ImageBuf::ConstIterator<Btype, float> b (B);
+    ImageBuf::Iterator<Rtype, float> r (R, roi);
+
+    for (int i = 0; i < result_channels; i++) {
+        // Get channels indices for each image.
+        int x = i * images;
+        int ai = channels_mask[x + 0];
+        int bi = channels_mask[x + 1];
+        int ri = channels_mask[x + 2];
+
+        for (r.pos(roi.xbegin, roi.ybegin); ! r.done(); r++) {
+            a.pos (r.x(), r.y(), r.z());
+            b.pos (r.x(), r.y(), r.z());
+
+            // There are 4 cases based on iterators a and b being valid or not
+            if (! a.valid()) {
+                if (! b.valid()) { // a and b invalid.
+                    r[ri] = 0;
+                } else { // a invalid, b valid.
+                    r[ri] = b[bi];
+                }
+            } else {
+                if (! b.valid()) { // a valid, b invalid.
+                    r[ri] = a[ai];
+                } else { // a and b valid.
+                    r[ri] = a[ai] * b[bi];
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+}    // anonymous namespace
+
+
+bool
+ImageBufAlgo::multiply (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
+                        std::vector<int> channels_mask, ROI roi, int nthreads)
+{
+    // Check ImageBuf types.
+    if (R.spec().format != TypeDesc::TypeFloat ||
+        A.spec().format != TypeDesc::TypeFloat ||
+        B.spec().format != TypeDesc::TypeFloat)
+        return false;
+
+    // Input validation.
+
+    // Specified ROI -> use it. Unspecified ROI -> initialize from R.
+    if (! roi.defined)
+        roi = get_roi (R.spec());
+
+    parallel_image (boost::bind (multiply_impl<float,float,float>,
+                                 boost::ref(R), boost::cref(A),
+                                 boost::cref(B), channels_mask, _1),
+                           roi, nthreads);
+    return true;
+}
+
+
+
 }
 OIIO_NAMESPACE_EXIT

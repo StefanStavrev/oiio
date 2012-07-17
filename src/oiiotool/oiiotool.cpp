@@ -1427,6 +1427,34 @@ action_over (int argc, const char *argv[])
 
 
 
+static int
+action_multiply (int argc, const char *argv[])
+{
+    if (ot.postpone_callback (2, action_multiply, argc, argv))
+        return 0;
+
+    ImageRecRef B (ot.pop());
+    ImageRecRef A (ot.pop());
+    ot.read (A);
+    ot.read (B);
+    const ImageBuf &Aib ((*A)());
+    const ImageBuf &Bib ((*B)());
+    const ImageSpec &specA = Aib.spec();
+    const ImageSpec &specB = Bib.spec();
+
+    ImageSpec specR (specA.width, specA.height, 3, TypeDesc::FLOAT);
+    ot.push (new ImageRec ("irec", specR, ot.imagecache));
+    ImageBuf &Rib ((*ot.curimg)());
+
+    // An arbitrary mask for testing purposes.
+    int m[] = {0, 0, 0, 1, 1, 1, 2, 2, 2};
+    std::vector<int> mask (m, m + sizeof(m) / sizeof(int) );
+    ImageBufAlgo::multiply (Rib, Aib, Bib, mask);
+    return 0;
+}
+
+
+
 static void
 getargs (int argc, char *argv[])
 {
@@ -1502,6 +1530,7 @@ getargs (int argc, char *argv[])
                 "--sub %@", action_sub, NULL, "Subtract two images",
                 "--abs %@", action_abs, NULL, "Take the absolute value of the image pixels",
                 "--over %@", action_over, NULL, "'Over' composite of two images",
+                "--multiply %@", action_multiply, NULL, "Testing channels masks",
                 "--flip %@", action_flip, NULL, "Flip the image vertically (top<->bottom)",
                 "--flop %@", action_flop, NULL, "Flop the image horizontally (left<->right)",
                 "--flipflop %@", action_flipflop, NULL, "Flip and flop the image (180 degree rotation)",

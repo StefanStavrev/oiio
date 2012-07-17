@@ -354,6 +354,11 @@ bool DLLPUBLIC over (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
 
 
 
+bool DLLPUBLIC multiply (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
+                         std::vector<int> channels_mask = std::vector<int>(),
+                         ROI roi = ROI(), int threads = 0);
+
+
 
 /// Helper template for generalized multithreading for image processing
 /// functions.  Some function/functor f is applied to every pixel the
