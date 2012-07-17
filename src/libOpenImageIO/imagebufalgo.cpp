@@ -1292,5 +1292,108 @@ ImageBufAlgo::over (ImageBuf &R, const ImageBuf &A, const ImageBuf &B, ROI roi,
 
 
 
+namespace { // anonymous namespace
+
+template<class RR, class B, class T>
+bool
+blend_impl (ImageBuf &R, const ImageBuf &bottom, const ImageBuf &top,
+            Blend::Op bmode, ROI roi)
+{
+    // Which blend mode?
+    float (*blend)(float, float);
+    switch (bmode) {
+    case Blend::Normal:         blend = &bm_normal;             break;
+    case Blend::Multiply:       blend = &bm_multiply;           break;
+    case Blend::Add:            blend = &bm_add;                break;
+    case Blend::ArithMean:      blend = &bm_arithmeticmean;     break;
+    case Blend::GeomMean:       blend = &bm_geometricmean;      break;
+    case Blend::Darken:         blend = &bm_darken;             break;
+    case Blend::Lighten:        blend = &bm_lighten;            break;
+    case Blend::Screen:         blend = &bm_screen;             break;
+    case Blend::Difference:     blend = &bm_difference;         break;
+    case Blend::Exclusion:      blend = &bm_exclusion;          break;
+    case Blend::HardLight:      blend = &bm_hardlight;          break;
+    case Blend::Overlay:        blend = &bm_overlay;            break;
+    case Blend::ColorDodge:     blend = &bm_colordodge;         break;
+    case Blend::ColorBurn:      blend = &bm_colorburn;          break;
+    case Blend::LinearLight:    blend = &bm_linearlight;        break;
+    case Blend::VividLight:     blend = &bm_vividlight;         break;
+    case Blend::LinearBurn:     blend = &bm_linearburn;         break;
+    case Blend::PinLight:       blend = &bm_pinlight;           break;
+    case Blend::SoftLight:      blend = &bm_softlight;          break;
+    default : return false;
+    }
+
+    ImageBuf::ConstIterator<B, float> b (bottom);
+    ImageBuf::ConstIterator<T, float> t (top);
+    ImageBuf::Iterator<RR, float> r (R, roi);
+    int nchannels = R.nchannels();
+    for ( ; ! r.done(); r++) {
+        b.pos (r.x(), r.y(), r.z());
+        t.pos (r.x(), r.y(), r.z());
+
+        // There are 4 cases based on iterators b and t being valid or not.
+        if (! b.valid()) {
+            if (! t.valid()) { // b and t invalid.
+                for (int i = 0; i < nchannels; i++)
+                    r[i] = 0;
+            } else { // b invalid, t valid.
+                for (int i = 0; i < nchannels; i++)
+                    r[i] = t[i];
+            }
+        } else {
+            if (! t.valid()) { // b valid, t invalid.
+                for (int i = 0; i < nchannels; i++)
+                    r[i] = b[i];
+            } else { // b and t valid.
+                for (int i = 0; i < nchannels; i++)
+                    r[i] = blend (b[i], t[i]);
+            }
+        }
+    }
+    return true;
+}
+
+}
+
+
+
+bool
+ImageBufAlgo::blend (ImageBuf &R, const ImageBuf &bottom, const ImageBuf &top,
+                     Blend::Op bmode, ROI roi, int threads)
+{
+    // All image buffers R, bottom and top must have float pixel data.
+    if (R.spec().format != TypeDesc::TypeFloat      ||
+        bottom.spec().format != TypeDesc::TypeFloat ||
+        top.spec().format != TypeDesc::TypeFloat)
+        return false;
+
+    // All images must have the same number of channels.
+    if (R.nchannels() != bottom.nchannels() ||
+        R.nchannels() != top.nchannels())
+        return false;
+
+    // Initialized R -> use as allocated.
+    // Uninitialized R -> size it to the union of bottom and top.
+    if (! R.initialized()) {
+        ImageSpec newspec = ImageSpec (specR.format);
+        ROI union_AB = roi_union (get_roi(specA), get_roi(specB));
+        set_roi (newspec, union_AB);
+        R.reset ("dummy", newspec);
+    }
+
+    // Specified ROI -> use it. Unspecified ROI -> initialize from R.
+    if (! roi.defined)
+        roi = get_roi (R.spec());
+
+    parallel_image (boost::bind (blend_impl<float,float,float>, boost::ref(R),
+                                 boost::cref(bottom), boost::cref(top), bmode,
+                                 _1),
+                           roi, nthreads);
+    return true;
+}
+
+
+
 }
 OIIO_NAMESPACE_EXIT

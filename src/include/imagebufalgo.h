@@ -56,6 +56,15 @@ OIIO_NAMESPACE_ENTER
 
 class Filter2D;  // forward declaration
 
+namespace Blend {
+enum DLLPUBLIC Op { Normal=1, Multiply=2, Add=3, ArithMean=4, GeomMean=5,
+                    Darken=6, Lighten=7, Screen=8, Difference=9, Exclusion=10,
+                    HardLight=11, Overlay=12, ColorDodge=13, ColorBurn=14,
+                    LinearLight=15, VividLight=16, LinearBurn=17, PinLight=18,
+                    SoftLight=19
+};
+}
+
 namespace ImageBufAlgo {
 
 /// Zero out (set to 0, black) the entire image.
@@ -352,6 +361,18 @@ bool DLLPUBLIC capture_image (ImageBuf &dst, int cameranum = 0,
 bool DLLPUBLIC over (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
                      ROI roi = ROI(), int threads = 0);
 
+
+
+/// ImageBufAlgo::blend ------------------------------------------------------
+/// Parameters:
+/// R           - The result of blending bottom and top is saved in R.
+/// bottom      - Bottom image.
+/// top         - Top image.
+/// bmode       - Blend mode represents a formula for blending top and bottom.
+/// --------------------------------------------------------------------------
+bool DLLPUBLIC blend (ImageBuf &R, const ImageBuf &bottom,
+                      const ImageBuf &top, Blend::Op bmode = Blend::Normal,
+                      ROI roi = ROI(), int threads = 0);
 
 
 
