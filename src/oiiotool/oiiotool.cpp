@@ -1397,6 +1397,37 @@ action_fixnan (int argc, const char *argv[])
 
 
 static int
+action_over (int argc, const char *argv[])
+{
+    if (ot.postpone_callback (2, action_over, argc, argv))
+        return 0;
+
+    ImageRecRef B (ot.pop());
+    ImageRecRef A (ot.pop());
+    ot.read (A);
+    ot.read (B);
+    const ImageBuf &Aib ((*A)());
+    const ImageBuf &Bib ((*B)());
+    const ImageSpec &specA = Aib.spec();
+    const ImageSpec &specB = Bib.spec();
+
+    // Create output image specification.
+    ImageSpec specR = specA;
+    set_roi (specR, roi_union (get_roi(specA), get_roi(specB)));
+    specR.nchannels = std::max (specA.nchannels, specB.nchannels);
+    if (specR.alpha_channel < 0 && specR.nchannels == 4)
+        specR.alpha_channel = 3;
+
+    ot.push (new ImageRec ("irec", specR, ot.imagecache));
+    ImageBuf &Rib ((*ot.curimg)());
+
+    ImageBufAlgo::over (Rib, Aib, Bib);
+    return 0;
+}
+
+
+
+static int
 action_blend (int argc, const char *argv[])
 {
     if (ot.postpone_callback (2, action_blend, argc, argv))
@@ -1414,13 +1445,22 @@ action_blend (int argc, const char *argv[])
     //specB.x = 0; specB.y = 0;
 
     // Create output image specification.
+    int has_alpha_A = (specA.alpha_channel >= 0);
+    int has_alpha_B = (specB.alpha_channel >= 0);
+    int maxc = std::max (specA.nchannels, specB.nchannels);
+    int c = (! has_alpha_A && ! has_alpha_B) ? maxc+1 : maxc;
     ROI r = roi_union (get_roi(specA), get_roi(specB));
-    ImageSpec specR (r.width(), r.height(), specA.nchannels, TypeDesc::FLOAT);
+    ImageSpec specR (r.width(), r.height(), c, TypeDesc::FLOAT);
+    if (! has_alpha_A || ! has_alpha_B)
+        specR.alpha_channel = 3;
+    else
+        specR.alpha_channel = has_alpha_A ? specA.alpha_channel
+                                          : specB.alpha_channel;
 
     ot.push (new ImageRec ("irec", specR, ot.imagecache));
     ImageBuf &Rib ((*ot.curimg)());
 
-    int i = atoi (argv[1]);
+    int i = atoi (argv[1]) - 1;
     ImageBufAlgo::blend (Rib, Aib, Bib, static_cast<Blend::Op>(i));
 
     return 0;

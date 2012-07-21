@@ -1294,60 +1294,394 @@ ImageBufAlgo::over (ImageBuf &R, const ImageBuf &A, const ImageBuf &B, ROI roi,
 
 namespace { // anonymous namespace
 
-template<class RR, class B, class T>
+// Sources -------------------------------------------------------------------
+// [1] www.pegtop.net/delphi/articles/blendmodes/
+// [2] dvcs.w3.org/hg/FXTF/rawfile/tip/compositing/index.html#blending
+// [3] Adobe PDF Reference, Sixth Edition, version 1.7, Chapter 7
+// [4] www.imagemagick.org./Usage/compose
+// [5] illusions.hu/effectwiki/doku.php?id=list_of_blendings
+// [6] yahvuu.wordpress.com/2009/09/27/blendmodes1
+// [7] docs.gimp.org/2.6/en/gimp-concepts-layer-modes.html
+// ---------------------------------------------------------------------------
+
+// General formulas for blending + Over --------------------------------------
+// color = a*(1-alpha_b) + b*(1-alpha_a) +
+//         alpha_a * alpha_b * Blend(b/alpha_b, a/alpha_a)
+// alpha = alpha_a + alpha_b*(1-alpha_a)
+// ----------------------------------------------------------------------------
+
+/// ArithmeticMean (a/aa, b/ba) = (a/aa + b/ba)/2.
+///
+/// color = a*(1-ba) + b*(1-aa) + aa*ba*ArithmeticMean(a/aa, b/ba) =
+///         a + b - (a*ba + b*aa)/2.
+float
+bm_arithmetic_mean (float a, float aa, float b, float ba)
+{
+    return a + b - (a*ba + b*aa)/2;
+}
+
+
+
+/// ColorBurn (a/aa, b/ba) =
+/// 1. if (a==0 && b==ba): 1.
+/// 2. if (a==0 && b!=ba): 0.
+/// 3. if (a!=0): 1 - min (1, (1-b/ba) * (aa/a)).
+///
+/// color = a*(1-ba) + b*(1-aa) + aa*ba*ColorBurn(a/aa, b/ba) =
+/// 1. a*(1-ba) + b*(1-aa) + aa*ba*1 = b.
+/// 2. a*(1-ba) + b*(1-aa) + aa*ba*0 = b*(1-aa).
+/// 3. a*(1-ba) + b*(1-aa) + aa*ba*(1 - min (1, (1-b/ba) * (aa/a))).
+float
+bm_color_burn (float a, float aa, float b, float ba)
+{
+    if (a==0) {
+        if (b==ba)
+            return b;
+        else
+            return b*(1-aa);
+    } else
+        return a*(1-ba) + b*(1-aa) +
+               aa*ba * (1 - std::min (1.0f, (1 - b/ba)*(aa/a)));
+}
+
+
+
+/// ColorDodge (a/aa, b/ba) =
+/// 1. if (a==aa && b==0): 0.
+/// 2. if (a==aa && b!=0): 1.
+/// 3. if (a!=aa): clamp (b/ba * aa/(aa-a), 0.0f, 1.0f).
+///
+/// color = a*(1-ba) + b*(1-aa) + aa*ba*ColorDodge(a/aa, b/ba) =
+/// 1. a*(1-ba) + b*(1-aa) + aa*ba*0 = a*(1-ba).
+/// 2. a*(1-ba) + b*(1-aa) + aa*ba*1 = a + b*(1-aa) + ba*(aa-a).
+/// 3. a*(1-ba) + b*(1-aa) + aa*ba*clamp(b/ba * aa/(aa-a), 0.0f, 1.0f).
+float
+bm_color_dodge (float a, float aa, float b, float ba)
+{
+    if (a==aa) {
+        if (b==0)
+            return a*(1-ba);
+        else
+            return a + b*(1-aa) + ba*(aa-a);
+    } else {
+        return a*(1-ba) + b*(1-aa) +
+               aa*ba * clamp (b/ba * aa/(aa-a), 0.0f, 1.0f);
+    }
+}
+
+
+
+/// Difference (a/aa, b/ba) = abs (a/aa - b/ba).
+///
+/// color = a*(1-ba) + b*(1-aa) + aa*ba*Difference(a/aa, b/ba) =
+///         a*(1-ba) + b*(1-aa) + aa*ba*abs((a*ba-b*aa) / (aa*ba)) =
+///         a*(1-ba) + b*(1-aa) + abs((a*ba-b*aa) =
+///         a+b - 2*min(a*ba, b*aa).
+float
+bm_difference (float a, float aa, float b, float ba)
+{
+    return a+b - 2*std::min (a*ba, b*aa);
+}
+
+
+
+/// Divide (a/aa, b/ba) =
+/// 1. if (b==0 && a==0): 0.
+/// 2. if (b==0 && a!=0): 1.
+/// 3. if (b!=0): a/aa * ba/b.
+///
+/// color = a*(1-ba) + b*(1-aa) + aa*ba*Divide(a/aa, b/ba) =
+/// 1. 0.
+/// 2. a*(1-ba) + b*(1-aa) + aa*ba*1 = ba*(aa-a) + a.
+/// 3. a*(1-ba) + b*(1-aa) + aa*ba*(a/aa * ba/b) =
+///    a*(1-ba) + b*(1-aa) + (a*ba*ba)/b.
+float
+bm_divide (float a, float aa, float b, float ba)
+{
+    if (b==0) {
+        if (a==0)
+            return 0;
+        else
+            return ba*(aa-a) + a;
+    } else
+        return a*(1-ba) + b*(1-aa) + (a*ba*ba)/b;
+}
+
+
+
+/// Exclusion (a/aa, b/ba) = a/aa + b/ba - (2 * a/aa * b/ba).
+///
+/// color = a*(1-ba) + b*(1-aa) + aa*ba*Exclusion(a/aa, b/ba) =
+///         a*(1-ba) + b*(1-aa) + aa*ba* (a/aa + b/ba - (2 * a/aa * b/ba)) =
+///         a*(1-ba) + b*(1-aa) + a*ba + b*aa - 2*a*b =
+///         a+b - 2*a*b.
+float
+bm_exclusion (float a, float aa, float b, float ba)
+{
+    return clamp (a+b - 2*a*b, 0.0f, 1.0f);
+}
+
+
+
+/// Geometric (a/aa, b/ba) =
+/// 1. if (a>0 && b>0): 2*a*b / (a*ba + b*aa).
+/// 2. else 0.
+///
+/// color = a*(1-ba) + b*(1-aa) + aa*ba*Geometric(a/aa, b/ba) =
+///         a*(1-ba) + b*(1-aa) + aa*ba* (2*a*b / (a*ba + b*aa)) =
+///         a*(1-ba) + b*(1-aa) + (2*a*b*aa*ba) / (a*ba + b*aa).
+float
+bm_geometric (float a, float aa, float b, float ba)
+{
+    if (a>0 && b>0)
+        return a*(1-ba) + b*(1-aa) + (2*a*b*aa*ba) / (a*ba + b*aa);
+    else
+        return a*(1-ba) + b*(1-aa);
+}
+
+
+
+/// HardLight (a/aa, b/ba) =
+/// 1. if (a/aa < 0.5): 2 * a/aa * b/ba.
+/// 2. else 1 - 2*(1-a/aa)*(1-b/ba).
+///
+/// color = a*(1-ba) + b*(1-aa) + aa*ba*HardLight(a/aa, b/ba) =
+/// 1. a*(1-ba) + b*(1-aa) + aa*ba* (2 * a/aa * b/ba) =
+///    a*(1-ba) + b*(1-aa) + 2*a*b.
+/// 2. a*(1-ba) + b*(1-aa) + aa*ba* (1 - 2*(1-a/aa)*(1-b/ba)) =
+///    a*(1-ba) + b*(1-aa) + aa*ba* (aa*ba - 2*(aa-a)*(ba-b)) / (aa*ba) =
+///    a*(1-ba) + b*(1-aa) + aa*ba - 2*(aa-a)*(ba-b) =
+///    a*(1+ba) + b*(1+aa) - aa*ba - 2*a*b.
+float
+bm_hard_light (float a, float aa, float b, float ba)
+{
+    if (a/aa < 0.5)
+        return a*(1-ba) + b*(1-aa) + 2*a*b;
+    else
+        return a*(1+ba) + b*(1+aa) - aa*ba - 2*a*b;
+}
+
+
+
+/// Hypotenuse (a/aa, b/ba) = sqrt (a/aa * a/aa + b/ba * b/ba).
+///
+/// color = a*(1-ba) + b*(1-aa) + aa*ba*Hypotenuse(a/aa, b/ba) =
+///         a*(1-ba) + b*(1-aa) + sqrt (a*a*ba*ba + b*b*aa*aa).
+float
+bm_hypotenuse (float a, float aa, float b, float ba)
+{
+    return a*(1-ba) + b*(1-aa) + sqrt (a*a*ba*ba + b*b*aa*aa);
+}
+
+
+
+/// LinearBurn (a/aa, b/ba) = a/aa + b/ba - 1.
+///
+/// color = a*(1-ba) + b*(1-aa) + aa*ba*LinearBurn(a/aa, b/ba) =
+///         a*(1-ba) + b*(1-aa) + aa*ba* (a/aa + b/ba - 1) =
+///         a*(1-ba) + b*(1-aa) + a*ba + b*aa - aa*ba =
+///         a + b - aa*ba;
+float
+bm_linear_burn (float a, float aa, float b, float ba)
+{
+    return clamp (a + b - aa*ba, 0.0f, 1.0f);
+}
+
+
+
+float
+bm_linear_light (float a, float b, float alpha_a, float alpha_b)
+{
+    return a*(1-alpha_b) + b*(1-alpha_a) +
+           alpha_a*alpha_b* (clamp (2*(a/alpha_a)+(b/alpha_b)-1, 0.0f, 1.0f));
+}
+
+float
+bm_max (float a, float b, float alpha_a, float alpha_b)
+{
+    return a*(1-alpha_b) + b*(1-alpha_a) + std::max (a*alpha_b, b*alpha_a);
+}
+
+float
+bm_min (float a, float b, float alpha_a, float alpha_b)
+{
+    return a*(1-alpha_b) + b*(1-alpha_a) + std::min (a*alpha_b, b*alpha_a);
+}
+
+float
+bm_minus (float a, float b, float alpha_a, float alpha_b)
+{
+    return a*(1-alpha_b) + b*(1-alpha_a) +
+           alpha_a*alpha_b* std::max (0.0f, (a/alpha_a)-(b/alpha_b));
+}
+
+float
+bm_multiply (float a, float b, float alpha_a, float alpha_b)
+{
+    return a*(1-alpha_b) + b*(1-alpha_a) + a*b;
+}
+
+float
+bm_normal (float a, float b, float alpha_a, float alpha_b)
+{
+    return a + b*(1-alpha_a);
+}
+
+float
+bm_overlay (float a, float b, float alpha_a, float alpha_b)
+{
+    return bm_hard_light (b, a, alpha_b, alpha_a);
+}
+
+float
+bm_pin_light (float a, float b, float alpha_a, float alpha_b)
+{
+    float A2 = 2*a/alpha_a;
+    return a*(1-alpha_b) + b*(1-alpha_a) + alpha_a*alpha_b*
+           std::max(0.0f, std::max(A2-1, std::min (b/alpha_b, A2)));
+}
+
+float
+bm_screen (float a, float b, float alpha_a, float alpha_b)
+{
+    float A = a/alpha_a, B = b/alpha_b;   
+    return (A>=0 && A<=1 && B>=0 && B<=1)
+           ? a+b-a*b : a+b - std::max (a*alpha_b, b*alpha_a);
+}
+
+float
+bm_soft_light (float a, float b, float alpha_a, float alpha_b)
+{
+    float A = a/alpha_a, B = b/alpha_b;
+    if (A < 0.5)
+        return a*(1-alpha_b) + b*(1-alpha_a) + 2*a*b*(1-B) + alpha_a*b*B;
+    else if (B < 0.25)
+        return a*(1-alpha_b) + b*(1-alpha_a) +
+        alpha_a*alpha_b*((16*B - 12) * B + 4) * B * ((2*A - 1) + 2*B*(1-A));
+    else
+        return alpha_b*(2*a-alpha_a)*(sqrt(B)-B) + a + b - a*alpha_b;
+}
+
+float
+bm_vivid_light (float a, float b, float alpha_a, float alpha_b)
+{
+    float A = a/alpha_a, B = b/alpha_b;
+    if (A==0) return 0;
+    if (A==1) return 1;
+    if (A < 0.5)
+        return a*(1-alpha_b) + b*(1-alpha_a) +
+               alpha_a*alpha_b*clamp (1 - (1-B)/(2*A), 0.0f, 1.0f);
+    else
+        return a*(1-alpha_b) + b*(1-alpha_a) +
+               alpha_a*alpha_b*clamp (B/(2*(1-A)), 0.0f, 1.0f);
+}
+
+template<class Rtype, class Atype, class Btype>
 bool
-blend_impl (ImageBuf &R, const ImageBuf &bottom, const ImageBuf &top,
-            Blend::Op bmode, ROI roi)
+blend_impl (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
+            Blend::Op op, ROI roi)
 {
     // Which blend mode?
-    float (*blend)(float, float);
-    switch (bmode) {
-    case Blend::Normal:         blend = &bm_normal;             break;
-    case Blend::Multiply:       blend = &bm_multiply;           break;
-    case Blend::Add:            blend = &bm_add;                break;
-    case Blend::ArithMean:      blend = &bm_arithmeticmean;     break;
-    case Blend::GeomMean:       blend = &bm_geometricmean;      break;
-    case Blend::Darken:         blend = &bm_darken;             break;
-    case Blend::Lighten:        blend = &bm_lighten;            break;
-    case Blend::Screen:         blend = &bm_screen;             break;
-    case Blend::Difference:     blend = &bm_difference;         break;
-    case Blend::Exclusion:      blend = &bm_exclusion;          break;
-    case Blend::HardLight:      blend = &bm_hardlight;          break;
-    case Blend::Overlay:        blend = &bm_overlay;            break;
-    case Blend::ColorDodge:     blend = &bm_colordodge;         break;
-    case Blend::ColorBurn:      blend = &bm_colorburn;          break;
-    case Blend::LinearLight:    blend = &bm_linearlight;        break;
-    case Blend::VividLight:     blend = &bm_vividlight;         break;
-    case Blend::LinearBurn:     blend = &bm_linearburn;         break;
-    case Blend::PinLight:       blend = &bm_pinlight;           break;
-    case Blend::SoftLight:      blend = &bm_softlight;          break;
+    float (*blend)(float, float, float, float);
+    switch (op) {
+    case Blend::ArithmeticMean:     blend = &bm_arithmetic_mean;    break;
+    case Blend::ColorBurn:          blend = &bm_color_burn;         break;
+    case Blend::ColorDodge:         blend = &bm_color_dodge;        break;
+    case Blend::Difference:         blend = &bm_difference;         break;
+    case Blend::Divide:             blend = &bm_divide;             break;
+    case Blend::Exclusion:          blend = &bm_exclusion;          break;
+    case Blend::Geometric:          blend = &bm_geometric;          break;
+    case Blend::HardLight:          blend = &bm_hard_light;         break;
+    case Blend::Hypotenuse:         blend = &bm_hypotenuse;         break;
+    case Blend::LinearBurn:         blend = &bm_linear_burn;        break;
+    case Blend::LinearLight:        blend = &bm_linear_light;       break;
+    case Blend::Max:                blend = &bm_max;                break;
+    case Blend::Min:                blend = &bm_min;                break;
+    case Blend::Minus:              blend = &bm_minus;              break;
+    case Blend::Multiply:           blend = &bm_multiply;           break;
+    case Blend::Normal:             blend = &bm_normal;             break;
+    case Blend::Overlay:            blend = &bm_overlay;            break;
+    case Blend::PinLight:           blend = &bm_pin_light;          break;
+    case Blend::Screen:             blend = &bm_screen;             break;
+    case Blend::SoftLight:          blend = &bm_soft_light;         break;
+    case Blend::VividLight:         blend = &bm_vivid_light;        break;
     default : return false;
     }
 
-    ImageBuf::ConstIterator<B, float> b (bottom);
-    ImageBuf::ConstIterator<T, float> t (top);
-    ImageBuf::Iterator<RR, float> r (R, roi);
-    int nchannels = R.nchannels();
+    // Output image R.
+    int channels_R = R.spec().nchannels;
+    int channels_R_min1 = channels_R-1;
+
+    // Input image A.
+    int alpha_index_A = A.spec().alpha_channel;
+    int has_alpha_A = (alpha_index_A >= 0);
+    int channels_A = A.spec().nchannels;
+    bool A3 = (channels_A == 3);
+    bool A3_no_alpha = (! has_alpha_A && A3);
+
+    // Input image B.
+    int alpha_index_B = B.spec().alpha_channel;
+    int has_alpha_B = (alpha_index_B >= 0);
+    int channels_B = B.spec().nchannels;
+    bool B3 = (channels_B == 3);
+    bool B3_no_alpha = (! has_alpha_B && B3);
+
+    ImageBuf::ConstIterator<Atype, float> a (A);
+    ImageBuf::ConstIterator<Btype, float> b (B);
+    ImageBuf::Iterator<Rtype, float> r (R, roi);
     for ( ; ! r.done(); r++) {
+        a.pos (r.x(), r.y(), r.z());
         b.pos (r.x(), r.y(), r.z());
-        t.pos (r.x(), r.y(), r.z());
 
         // There are 4 cases based on iterators b and t being valid or not.
-        if (! b.valid()) {
-            if (! t.valid()) { // b and t invalid.
-                for (int i = 0; i < nchannels; i++)
+        if (! a.valid()) {
+            if (! b.valid()) { // a and b invalid.
+                for (int i = 0; i < channels_R; i++)
                     r[i] = 0;
-            } else { // b invalid, t valid.
-                for (int i = 0; i < nchannels; i++)
-                    r[i] = t[i];
+            } else { // a invalid, b valid.
+                for (int c = 0; c < channels_B; c++)
+                    r[c] = b[c];
+                if (B3_no_alpha)
+                    r[3] = 1;
             }
         } else {
-            if (! t.valid()) { // b valid, t invalid.
-                for (int i = 0; i < nchannels; i++)
-                    r[i] = b[i];
-            } else { // b and t valid.
-                for (int i = 0; i < nchannels; i++)
-                    r[i] = blend (b[i], t[i]);
+            if (! b.valid()) { // a valid, b invalid.
+                for (int c = 0; c < channels_A; c++)
+                    r[c] = a[c];
+                if (A3_no_alpha)
+                    r[3] = 1;
+            } else { // a and b valid.
+                float alpha_A = has_alpha_A ? a[alpha_index_A] : (A3?1:a[3]);
+                float alpha_B = has_alpha_B ? b[alpha_index_B] : (B3?1:b[3]);
+                
+                // 4 cases based on alpha_A and alpha_B being 0 or not.
+                // Alpha channel is assumed to be the last one
+                // r[channels_R_min1]. If both alpha_A and alpha_B are 0
+                // then set all channels to 0. If exactly one of alpha_A and
+                // alpha_B is 0, then copy values from the image which has
+                // non-zero alpha. If both alpha_A and alpha_B are different
+                // than 0, only then we can apply blending.
+                if (alpha_A == 0) {
+                    if (alpha_B == 0) {
+                        for (int c = 0; c < channels_R_min1; c++)
+                            r[c] = 0;
+                        r[channels_R_min1] = 0;
+                    } else {
+                        for (int c = 0; c < channels_R_min1; c++)
+                            r[c] = b[c];
+                        r[channels_R_min1] = alpha_B;
+                    }
+                } else {
+                    if (alpha_B == 0){
+                        for (int c = 0; c < channels_R_min1; c++)
+                            r[c] = a[c];
+                        r[channels_R_min1] = alpha_A;
+                    } else {
+                        for (int c = 0; c < channels_R_min1; c++)
+                            r[c] = blend (a[c], alpha_A, b[c], alpha_B);
+                        r[channels_R_min1] = alpha_A + (1-alpha_A)*alpha_B;
+                    }
+                }
             }
         }
     }
@@ -1359,37 +1693,93 @@ blend_impl (ImageBuf &R, const ImageBuf &bottom, const ImageBuf &top,
 
 
 bool
-ImageBufAlgo::blend (ImageBuf &R, const ImageBuf &bottom, const ImageBuf &top,
+ImageBufAlgo::blend (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
                      Blend::Op bmode, ROI roi, int threads)
 {
-    // All image buffers R, bottom and top must have float pixel data.
-    if (R.spec().format != TypeDesc::TypeFloat      ||
-        bottom.spec().format != TypeDesc::TypeFloat ||
-        top.spec().format != TypeDesc::TypeFloat)
+    // All image buffers R, A and B must have float pixel data.
+    if (R.spec().format != TypeDesc::TypeFloat ||
+        A.spec().format != TypeDesc::TypeFloat ||
+        B.spec().format != TypeDesc::TypeFloat)
         return false;
 
-    // All images must have the same number of channels.
-    if (R.nchannels() != bottom.nchannels() ||
-        R.nchannels() != top.nchannels())
+    // Output image R.
+    const ImageSpec &specR = R.spec();
+    int alpha_R = specR.alpha_channel;
+    int channels_R = specR.nchannels;
+    int non_alpha_R = channels_R - (alpha_R >= 0);
+    bool initialized_R = R.initialized();
+
+    // Input image A.
+    const ImageSpec &specA = A.spec();
+    int alpha_A = specA.alpha_channel;
+    int has_alpha_A = (alpha_A >= 0);
+    int channels_A = specA.nchannels;
+    int non_alpha_A = has_alpha_A ? (channels_A - 1) : 3;
+    bool A_not_34 = channels_A != 3 && channels_A != 4;
+
+    // Input image B.
+    const ImageSpec &specB = B.spec();
+    int alpha_B = specB.alpha_channel;
+    int has_alpha_B = (alpha_B >= 0);
+    int channels_B = specB.nchannels;
+    int non_alpha_B = has_alpha_B ? (channels_B - 1) : 3;
+    bool B_not_34 = channels_B != 3 && channels_B != 4;
+
+    // Fail if the input images have a Z channel.
+    if (specA.z_channel >= 0 || specB.z_channel >= 0)
+        return false;
+
+    // A and B have different number of non-alpha channels -> return false.
+    if (non_alpha_A != non_alpha_B)
+        return false;
+
+    // A or B has number of channels other than 3 and 4, and no alpha channel.
+    if ((A_not_34 && !has_alpha_A) || (B_not_34 && !has_alpha_B))
+        return false;
+
+    // A or B has less than 2 channels -> return false.
+    if (channels_A < 2 || channels_B < 2)
         return false;
 
     // Initialized R -> use as allocated.
-    // Uninitialized R -> size it to the union of bottom and top.
-    if (! R.initialized()) {
-        ImageSpec newspec = ImageSpec (specR.format);
+    // Uninitialized R -> size it to the union of A and B.
+    ImageSpec newspec = ImageSpec (specR.format);
+    if (! initialized_R) {
         ROI union_AB = roi_union (get_roi(specA), get_roi(specB));
         set_roi (newspec, union_AB);
-        R.reset ("dummy", newspec);
+    }
+    if ((! has_alpha_A && ! has_alpha_B)
+        || (has_alpha_A && ! has_alpha_B && alpha_A == channels_A - 1)
+        || (! has_alpha_A && has_alpha_B && alpha_B == channels_B - 1)) {
+        if (! initialized_R) {
+            newspec.nchannels = 4;
+            newspec.alpha_channel = 3;
+            R.reset ("dummy", newspec);
+        } else {
+            if (non_alpha_R != 3 || alpha_R != 3)
+                return false;
+        }
+    } else if (has_alpha_A && has_alpha_B && alpha_A == alpha_B) {
+        if (! initialized_R) {
+            newspec.nchannels = channels_A;
+            newspec.alpha_channel = alpha_A;
+            R.reset ("dummy", newspec);
+        } else {
+            if (non_alpha_R != non_alpha_A || alpha_R != alpha_A)
+                return false;
+        }
+    } else {
+        return false;
     }
 
     // Specified ROI -> use it. Unspecified ROI -> initialize from R.
     if (! roi.defined)
-        roi = get_roi (R.spec());
+        roi = get_roi (R.spec());    
 
     parallel_image (boost::bind (blend_impl<float,float,float>, boost::ref(R),
-                                 boost::cref(bottom), boost::cref(top), bmode,
+                                 boost::cref(A), boost::cref(B), bmode,
                                  _1),
-                           roi, nthreads);
+                           roi, threads);
     return true;
 }
 

@@ -57,12 +57,34 @@ OIIO_NAMESPACE_ENTER
 class Filter2D;  // forward declaration
 
 namespace Blend {
-enum DLLPUBLIC Op { Normal=1, Multiply=2, Add=3, ArithMean=4, GeomMean=5,
-                    Darken=6, Lighten=7, Screen=8, Difference=9, Exclusion=10,
-                    HardLight=11, Overlay=12, ColorDodge=13, ColorBurn=14,
-                    LinearLight=15, VividLight=16, LinearBurn=17, PinLight=18,
-                    SoftLight=19
+
+// Alphabetically ordered blend modes.
+enum Op
+{
+    ArithmeticMean, // (A+B)/2
+    ColorBurn,      // 1 - (1-B)/A
+    ColorDodge,     // B/(1-A)
+    Difference,     // abs(A-B)
+    Divide,         // A/B
+    Exclusion,      // A+B-2AB
+    Geometric,      // 2AB/(A+B)
+    HardLight,      // if(A<0.5):2AB, else 1 - 2(1-A)(1-B)
+    Hypotenuse,     // sqrt(A*A + B*B)
+    LinearBurn,     // A+B-1
+    LinearLight,    // 2A+B-1
+    Max,            // max(A,B)
+    Min,            // min(A,B)
+    Minus,          // A-B
+    Multiply,       // AB
+    Normal,         // A
+    Overlay,        // hard_light (B,A)
+    PinLight,       // max(2A-1, min(B, 2A))
+    Screen,         // A+B-A*B if A and B are in range 0-1, otherwise max(A,B)
+    SoftLight,      // if (A<0.5): B*Screen(2A,B), else B+(2A-1)(D-B),
+                    // where D=sqrt(B) if (B>0.25), otherwise ((16B-12)B+4)B.
+    VividLight      // 1-(1-B)/2A if A<0.5, else B / (2(1-A))
 };
+
 }
 
 namespace ImageBufAlgo {
@@ -365,14 +387,16 @@ bool DLLPUBLIC over (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
 
 /// ImageBufAlgo::blend ------------------------------------------------------
 /// Parameters:
-/// R           - The result of blending bottom and top is saved in R.
-/// bottom      - Bottom image.
-/// top         - Top image.
-/// bmode       - Blend mode represents a formula for blending top and bottom.
+/// R           - The result of blending input images A and B.
+/// A           - Top/source image.
+/// B           - Bottom/backdrop image.
+/// op          - Represents a blending formula.
+/// roi         - Blending is applied only in this region.
+/// threads     - Number of threads.
 /// --------------------------------------------------------------------------
-bool DLLPUBLIC blend (ImageBuf &R, const ImageBuf &bottom,
-                      const ImageBuf &top, Blend::Op bmode = Blend::Normal,
-                      ROI roi = ROI(), int threads = 0);
+bool DLLPUBLIC blend (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
+                      Blend::Op op = Blend::Normal, ROI roi = ROI(),
+                      int threads = 0);
 
 
 
