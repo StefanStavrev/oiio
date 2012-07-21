@@ -1516,9 +1516,9 @@ bm_minus (float a, float b, float alpha_a, float alpha_b)
 }
 
 float
-bm_multiply (float a, float b, float alpha_a, float alpha_b)
+bm_multiply (float a, float aa, float b, float ba)
 {
-    return a*(1-alpha_b) + b*(1-alpha_a) + a*b;
+    return a*(1-ba) + b*(1-aa) + aa*ba*(a/aa * b/ba);
 }
 
 float
