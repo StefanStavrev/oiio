@@ -354,6 +354,13 @@ bool DLLPUBLIC over (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
 
 
 
+bool DLLPUBLIC contrast_stretch (ImageBuf &R, const ImageBuf &A,
+                                 float low = -1, float high = -1,
+                                 float min = 0, float max = 1,
+                                 std::vector<int> cmask = std::vector<int>(),
+                                 ROI roi = ROI(), int threads = 0);
+
+
 
 /// Helper template for generalized multithreading for image processing
 /// functions.  Some function/functor f is applied to every pixel the
