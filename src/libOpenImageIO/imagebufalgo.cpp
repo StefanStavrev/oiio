@@ -1292,5 +1292,157 @@ ImageBufAlgo::over (ImageBuf &R, const ImageBuf &A, const ImageBuf &B, ROI roi,
 
 
 
+namespace { // anonymous namespace
+
+// Fully type-specialized version of contrast_stretch.
+template<class Rtype, class Atype>
+bool
+contrast_stretch_impl (ImageBuf &R, const ImageBuf &A, float low, float high,
+                       float min, float max, std::vector<int> channels_mask,
+                       ROI roi)
+{
+    // Double check types.
+    if (R.spec().format != BaseTypeFromC<Rtype>::value ||
+        A.spec().format != BaseTypeFromC<Atype>::value)
+        return false;
+
+    ImageBuf::ConstIterator<Atype, float> a (A);
+    ImageBuf::Iterator<Rtype, float> r (R, roi);
+    int result_channels = channels_mask.size() / 2;
+
+    float ratio = (max-min) / (high-low);
+
+    for (int i = 0; i < result_channels; i++) {
+        int ai = channels_mask[2*i + 0];
+        int ri = channels_mask[2*i + 1];
+
+        // Get low and high for each channel.
+        if (low==-1 && high==-1) {
+            // Get lowest and highest pixel values in the image
+            low = std::numeric_limits<float>::max();
+            high = std::numeric_limits<float>::min();
+            for ( ; ! a.done(); ++r) {
+                if (a[ai] < low)
+                    low = a[ai];
+                if (a[ai] > high)
+                    high = a[ai];
+            }
+        }
+
+        for (r.pos(roi.xbegin, roi.ybegin); ! r.done(); r++) {
+            a.pos (r.x(), r.y(), r.z());
+
+            if (a[ai] >= low && a[ai] <= high)
+                r[ri] = min + (a[ai]-low)*ratio;
+            else if (a[ai] < low)
+                r[ri] = 0;
+            else
+                r[ri] = 1;
+        }
+    }
+
+    return true;
+}
+
+bool
+is_channels_mask_valid (std::vector<int> channels_mask,
+                        std::vector<int> images_channels)
+{
+    int size = channels_mask.size();
+    int images = images_channels.size();
+
+    if (size == 0) {
+        // All input images must have the same number of channels.
+        int c = images_channels[1];
+        for (int i = 2; i < images_channels.size(); i++)
+            if (images_channels[i] != c)
+                return false;
+
+        // The output image must have at least as many channels as each of the
+        // input images have, to be able to accommodate the result.
+        if (images_channels[0] < c)
+            return false;
+
+        // Create default mask.
+        for (int i = 0; i < c; i++)
+            channels_mask.assign (images, i);
+
+        return true;
+    } else {
+        // Does channels_mask have a valid number of elements?
+        if (size % images != 0)
+            return false;
+
+        // Does R have enough channels to accommodate the result?
+        int result_channels = size / images;
+        if (images_channels[0] < result_channels)
+            return false;
+
+        // Are the values in the mask valid channels in the appropriate images
+        for (int i = 0; i < result_channels; i++) {
+            int ai = channels_mask[i];
+            int image = i % images;
+            if (ai < 0 || ai >= images_channels[image])
+                return false;
+        }
+    }
+    return true;
+}
+
+}
+
+
+
+bool
+ImageBufAlgo::contrast_stretch (ImageBuf &R, const ImageBuf &A, float low,
+                                float high, float min, float max,
+                                std::vector<int> channels_mask,
+                                ROI roi, int threads)
+{
+    // Images A and R must have float pixel data.
+    if (R.spec().format != TypeDesc::TypeFloat ||
+        A.spec().format != TypeDesc::TypeFloat)
+        return false;
+
+    // A must have at least one channel.
+    int channels_A = A.nchannels();
+    if (channels_A < 1)
+        return false;
+
+    // Channels mask.
+    std::vector<int> images_channels;
+    images_channels.push_back (R.nchannels());
+    images_channels.push_back (A.nchannels());
+    if (! is_channels_mask_valid (channels_mask, images_channels))
+        return false;
+
+    if (R.initialized()) {
+        // Can roi be fully contained in R.
+        if (roi.defined &&
+            (R.spec().width < roi.width() || R.spec().height < roi.height()))
+            return false;
+    } else {
+        // R must be initialized by the caller who must know how many channels
+        // it should have.
+        return false;
+    }
+
+    // Is the min->max range valid?
+    if (max <= min)
+        return false;
+
+    // Specified ROI -> use it. Unspecified ROI -> initialize from R.
+    if (! roi.defined)
+        roi = get_roi (R.spec());
+
+    parallel_image (boost::bind (contrast_stretch_impl<float,float>,
+                                 boost::ref(R), boost::cref(A), low, high,
+                                 min, max, channels_mask, _1),
+                           roi, threads);
+    return true;
+}
+
+
+
 }
 OIIO_NAMESPACE_EXIT
