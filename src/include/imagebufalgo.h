@@ -354,6 +354,12 @@ bool DLLPUBLIC over (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
 
 
 
+bool DLLPUBLIC histogram_eq (ImageBuf &R, const ImageBuf &A,
+                             std::vector<int> cmask = std::vector<int>(),
+                             float min = 0.0f, float max = 1.0f,
+                             ROI roi = ROI(), int threads = 0);
+
+
 
 /// Helper template for generalized multithreading for image processing
 /// functions.  Some function/functor f is applied to every pixel the
