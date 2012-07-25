@@ -76,50 +76,10 @@ void ImageBuf_test_appbuffer ()
 
 
 
-// Tests histogram computation, by computing the histogram for a known
-// ImageBuf and then comparing the results with what we expect.
-void histogram_computation_test ()
-{
-    const int WIDTH     = 10;
-    const int HEIGHT    = 10;
-    const int BINS      = 10;
-    const int CHANNEL   = 0;
-
-    // Create ImageBuf A for testing.
-    static float buf[HEIGHT][WIDTH] = {
-        { 0.09f, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-        { 0, 0.19f, 0, 0, 0, 0, 0, 0, 0, 0 },
-        { 0, 0, 0.29f, 0, 0, 0, 0, 0, 0, 0 },
-        { 0, 0, 0, 0.39f, 0, 0, 0, 0, 0, 0 },
-        { 0, 0, 0, 0, 0.49f, 0, 0, 0, 0, 0 },
-        { 0, 0, 0, 0, 0, 0.59f, 0, 0, 0, 0 },
-        { 0, 0, 0, 0, 0, 0, 0.69f, 0, 0, 0 },
-        { 0, 0, 0, 0, 0, 0, 0, 0.79f, 0, 0 },
-        { 0, 0, 0, 0, 0, 0, 0, 0, 0.89f, 0 },
-        { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.99f },
-    };
-    ImageSpec spec (WIDTH, HEIGHT, 1, TypeDesc::FLOAT);
-    const ImageBuf A ("A", spec, buf);
-
-    // Compute A's histogram.
-    std::vector<imagesize_t> hist;
-    ImageBufAlgo::histogram (A, CHANNEL, hist, BINS);
-
-    // Are the histogram's values what we expect?
-    OIIO_CHECK_EQUAL (hist.size(), BINS);
-    OIIO_CHECK_EQUAL (hist[0], 91);
-    for (int i = 1; i < BINS; i++) {
-        OIIO_CHECK_EQUAL (hist[i], 1);
-    }
-}
-
-
-
 int
 main (int argc, char **argv)
 {
     ImageBuf_test_appbuffer ();
-    histogram_computation_test ();
     
     return unit_test_failures;
 }
