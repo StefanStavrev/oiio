@@ -47,6 +47,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 #include "imagebuf.h"
 #include "imagebufalgo.h"
@@ -1587,6 +1588,155 @@ ImageBufAlgo::histogram_draw (ImageBuf &R,
         }
     }
     return true;
+}
+
+
+
+namespace { // anonymous namespace
+
+// Fully type-specialized version of ImageBufAlgo::contrast.
+template<class Rtype, class Atype>
+bool
+contrast_impl (ImageBuf &R, const ImageBuf &A, std::vector<float> contrast,
+               bool luminance, float pivot, ROI roi)
+{
+    // Double check types.
+    if (R.spec().format != BaseTypeFromC<Rtype>::value ||
+        A.spec().format != BaseTypeFromC<Atype>::value) {
+        R.error ("Unsupported pixel data format combination '%s / %s'",
+                  R.spec().format, A.spec().format);
+        return false;
+    }
+
+    ImageBuf::ConstIterator<Atype, float> a (A);
+    ImageBuf::Iterator<Rtype, float> r (R, roi);
+
+    if (! luminance) {
+        for ( ; ! r.done(); r++) {
+            a.pos (r.x(), r.y(), r.z());
+            for (int i = 0; i < R.nchannels(); i++)
+                r[i] = clamp ((a[i] - pivot)*contrast[i] + pivot, 0.0f, 1.0f);
+        }
+    } else {
+        for ( ; ! r.done(); r++) {
+            a.pos (r.x(), r.y(), r.z());
+
+            // Compute luminance L.
+            float L = 0.299f*a[0] + 0.587f*a[1] + 0.114f*a[2];
+
+            // Modify contrast for L to get the new luminance L_new.
+            float L_new = clamp ((L - pivot)*contrast[0] + pivot, 0.0f, 1.0f);
+
+            // Multiply the R, G and B components with L_new/L.
+            float ratio = L_new/L;
+            r[0] = clamp (a[0] * ratio, 0.0f, 1.0f);
+            r[1] = clamp (a[1] * ratio, 0.0f, 1.0f);
+            r[2] = clamp (a[2] * ratio, 0.0f, 1.0f);
+        }
+    }
+
+    return true;
+}
+
+} // anonymous namespace
+
+
+
+bool
+ImageBufAlgo::contrast (ImageBuf &R, const ImageBuf &A,
+                        std::vector<float> contrast, bool luminance,
+                        float pivot, ROI roi, int threads)
+{
+    int contrast_size = contrast.size();
+
+    // Images R and A must have float pixel data.
+    if (R.spec().format != TypeDesc::TypeFloat ||
+        A.spec().format != TypeDesc::TypeFloat) {
+        R.error ("Unsupported pixel data format combination '%s / %s'",
+                  R.spec().format, A.spec().format);
+        return false;
+    }
+
+    // Initialize output image R from input image A if needed.
+    if (! R.initialized()) {
+        ImageSpec newspec = A.spec();
+        newspec.set_format (TypeDesc::FLOAT);
+        R.reset ("dummy", newspec);
+    } else {
+        if (R.nchannels() != A.nchannels()) {
+            std::string err = std::string ("Input and output image ").append
+                              ("must have the same number of channels");
+            R.error (err.c_str());
+            return false;
+        }
+    }
+
+    // Input image A must have at least one channel.
+    if (A.nchannels() < 1) {
+        R.error ("Input image must have at least 1 channel");
+        return false;
+    }
+
+    // The contrast vector must have A.nchannels() elements.
+    if (contrast_size != A.nchannels() && contrast_size != 1) {
+        R.error ("The number of contrast values must be either 1 or %d",
+                  A.nchannels());
+        return false;
+    }
+
+    // Are all the values in the contrast vector valid, that is >= 0?
+    for (int i = 0; i < contrast_size; i++) {
+        if (contrast[i] < 0) {
+            R.error ("Contrast values must be non-negative");
+            return false;
+        }
+    }
+
+    // Pivot must be in range 0->1.
+    if (pivot < 0 || pivot > 1) {
+        R.error ("Pivot must be a value between 0 and 1 inclusive");
+        return false;
+    }
+
+    // If roi is not defined then initialize from R.
+    if (! roi.defined) {
+        roi = get_roi (R.spec());
+    // If roi is defined then clip to R's region.
+    } else {
+        roi = roi_intersection (roi, get_roi (R.spec()));
+        if (! roi.defined) {
+            std::string err = std::string ("Output image and region ").append
+                              ("of interest don't have any common pixels");
+            R.error (err.c_str());
+            return false;
+        }
+    }
+
+    // Catch the bad cases when luminance == true.
+    if (luminance) {
+        // A must have exactly 3 non-alpha and non-z channels.
+        int nchannels = A.nchannels() - (A.spec().alpha_channel >= 0)
+                                      - (A.spec().z_channel >= 0);
+        if (nchannels != 3) {
+            std::string err = std::string ("Input image must have ").append
+                              ("exactly 3 non-alpha and non-z channels");
+            R.error (err.c_str());
+            return false;
+        }
+
+        // The contrast vector must have exactly one element.
+        if (contrast_size != 1) {
+            R.error ("Exactly one contrast value needs to be specified");
+            return false;
+        }
+    }
+
+    parallel_image (boost::bind (contrast_impl<float,float>,
+                                 boost::ref(R), boost::cref(A), contrast,
+                                 luminance, pivot, _1),
+                           roi, threads);
+
+    return ! R.has_error();
 }
 
 }

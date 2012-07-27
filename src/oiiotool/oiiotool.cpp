@@ -42,6 +42,7 @@
 #include <boost/tokenizer.hpp>
 #include <boost/foreach.hpp>
 #include <boost/filesystem.hpp>
+#include <boost/algorithm/string.hpp>
 
 #include "argparse.h"
 #include "imageio.h"
@@ -1614,6 +1615,72 @@ action_histogram (int argc, const char *argv[])
 
 
 
+/// action_contrast ----------------------------------------------------------
+/// Usage:
+///             ./oiiotool in --contrast:pivot=float:lum=int contrast -o out
+///
+/// in          - Input image whose contrast will be modified.
+/// pivot       - Optional float argument in range 0->1, with default 0.5.
+/// lum         - Optional int argument that can take two values, 0 or 1:
+///               0(default) -> modify contrast for all channels.
+///               1          -> assume first 3 channels are RGB and modify
+///                             contrast for the luminance channel.
+/// contrast    - Float argument that defines if contrast is increased(>1),
+///               decreased(<1) or not modified(1). Negative values are not
+///               allowed.
+/// out         - Output image with modified contrast.
+/// --------------------------------------------------------------------------
+static int
+action_contrast (int argc, const char *argv[])
+{
+    if (ot.postpone_callback (1, action_contrast, argc, argv))
+        return 0;
+
+    // Input image.
+    ot.read ();
+    ImageRecRef A (ot.pop());
+    const ImageBuf &Aib ((*A)());
+
+    // Output image.
+    ImageSpec specR = Aib.spec();
+    specR.set_format (TypeDesc::FLOAT);
+    ot.push (new ImageRec ("irec", specR, ot.imagecache));
+    ImageBuf &Rib ((*ot.curimg)());
+    
+    // Get pivot and luminance from command line.
+    float pivot = 0.5f;
+    bool lum = false;
+    std::string cmd = argv[0];
+    size_t pos;
+    while ((pos = cmd.find_first_of(":")) != std::string::npos) {
+        cmd = cmd.substr (pos+1, std::string::npos);
+        if (Strutil::istarts_with(cmd,"lum="))
+            lum = (bool) atoi(cmd.c_str()+4);
+        else if (Strutil::istarts_with(cmd,"pivot="))
+            pivot = (float) atof(cmd.c_str()+6);
+    }
+
+    // Get contrast values from command line.
+    std::string contrast_string = argv[1];
+    std::vector<std::string> contrast_values;
+    boost::split(contrast_values, contrast_string, boost::is_any_of(","));
+    std::vector<float> contrast;
+    int contrast_values_size = contrast_values.size();
+    for (int i = 0; i < contrast_values_size; i++) {
+        contrast.push_back ((float) atof (contrast_values[i].c_str()));
+    }
+    if (contrast.size() == 1 && lum == false)
+        contrast.assign (Aib.nchannels(), contrast[0]);
+
+    bool ok = ImageBufAlgo::contrast (Rib, Aib, contrast, lum, pivot);
+    if (! ok)
+        ot.error (argv[0], Rib.geterror());
+
+    return 0;
+}
+
+
+
 static void
 getargs (int argc, char *argv[])
 {
@@ -1685,7 +1752,8 @@ getargs (int argc, char *argv[])
                 "--sub %@", action_sub, NULL, "Subtract two images",
                 "--abs %@", action_abs, NULL, "Take the absolute value of the image pixels",
                 "--over %@", action_over, NULL, "'Over' composite of two images",
-                "--histogram %@ %s %d", action_histogram, NULL, NULL, "Histogram one channel (args: cumulative=0)",
+                "--histogram %@ %s %d", action_histogram, NULL, NULL, "Histogram one channel (optional args: cumulative=0)",
+                "--contrast %@ %s", action_contrast, NULL, "Modify contrast by applying a formula to all pixels (optional args: pivot=0.5, lum=0)",
                 "--flip %@", action_flip, NULL, "Flip the image vertically (top<->bottom)",
                 "--flop %@", action_flop, NULL, "Flop the image horizontally (left<->right)",
                 "--flipflop %@", action_flipflop, NULL, "Flip and flop the image (180 degree rotation)",
