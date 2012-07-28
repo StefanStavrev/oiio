@@ -409,47 +409,48 @@ bool DLLPUBLIC histogram_draw (ImageBuf &R,
 ///                   = in*contrast + pivot*(1-contrast)
 ///
 /// Parameters:
-/// R           - Output image R must have float pixel data. It can be either
-///               initialized or not. If not initialized, then initialize
-///               from input image A's spec, but set the format to float.
-///               If initialized, check if R.nchannels() == A.nchannels(), and
-///               fail if not true.
-/// A           - Input image A must have at least 1 channel and float pixel
-///               data.
-/// contrast    - This vector has either 1 or A.nchannels() values, each >= 0.
-///               If there is 1 value, it is applied to all channels. If there
-///               are A.nchannels() values, each value is applied to its
-///               respective channel. Each value determines for its channel if
-///               contrast is increased(>1), decreased(<1), or not changed(1).
-/// luminance   - If luminance is 0 then the operation is applied to all
-///               channels. If 1, the first 3 channels are assumed to be RGB
-///               and the operation is applied to their luminance channel. If
-///               luminance is true and the number of non-alpha and non-z
-///               channels in A is different than 3, then fail. Alpha and z
-///               channels can be present, but will be ignored.
-/// pivot       - Pivot must be between 0 and 1 inclusive. The default value
-///               is average(0,1)=0.5.
-/// roi         - The operation will be applied only to this region. If not
-///               defined, then initialize from R's region. If defined, then
-///               clip roi to its intersection with R's region, and fail if
-///               this intersection region is empty.
+/// R           - Output image R must have float pixel data. If initialized,
+///               fail if R.nchannels() != A.nchannels(). If not initialized,
+///               initialize from A.spec(), but set the format to float.
+/// A           - Input image A must have >= 1 channel and float pixel data.
+/// contrast    - This function assumes the caller will provide it with
+///               contrast array with A.nchannels() values, and it fails if
+///               any of them is < 0. Each value is used for its respective
+///               channel and determines if contrast is increased(>1),
+///               decreased(<1), or not modified(1).
+/// luminance   - If false, the operation is applied to all channels. If true,
+///               the first 3 channels are assumed RGB and the operation is
+///               applied to their luminance channel, while ignoring alpha and
+///               z channels if present. If true and the number of non-alpha
+///               and non-z channels in A is != 3, then fail.
+/// pivot       - This function assumes the caller will provide it with
+///               pivot array with A.nchannels() values, and it fails if any
+///               of them is < 0 or > 1. Each value is used for its respective
+///               channel.
+/// roi         - The operation is applied only to this region. If not defined
+///               it is initialized from R's region. If defined, it is clipped
+///               to its intersection with R's region, and the operation fails
+///               if that intersection region is empty.
 /// threads     - Number of threads.
 /// --------------------------------------------------------------------------
 bool DLLPUBLIC contrast (ImageBuf &R, const ImageBuf &A,
+                         float* contrast, float* pivot=NULL,
+                         ROI roi=ROI(), int threads=0);
+
+/// One contrast value per channel and one pivot value for all channels.
+bool DLLPUBLIC contrast (ImageBuf &R, const ImageBuf &A,
+                         float* contrast, float pivot=0.5f,
+                         ROI roi=ROI(), int threads=0);
+
+/// One contrast value for all channels and one pivot value per channel.
+bool DLLPUBLIC contrast (ImageBuf &R, const ImageBuf &A,
+                         float contrast, float* pivot=NULL,
+                         ROI roi=ROI(), int threads=0);
+
+/// One contrast value and one pivot value for all channels.
+bool DLLPUBLIC contrast (ImageBuf &R, const ImageBuf &A,
                          float contrast, bool luminance=false,
                          float pivot=0.5f, ROI roi=ROI(), int threads=0);
-
-bool DLLPUBLIC contrast (ImageBuf &R, const ImageBuf &A,
-                         float* contrast, bool luminance=false,
-                         float pivot=0.5f, ROI roi=ROI(), int threads=0);
-
-bool DLLPUBLIC contrast (ImageBuf &R, const ImageBuf &A,
-                         float contrast, bool luminance=false,
-                         float* pivot=NULL, ROI roi=ROI(), int threads=0);
-
-bool DLLPUBLIC contrast (ImageBuf &R, const ImageBuf &A,
-                         float* contrast, bool luminance=false,
-                         float* pivot=NULL, ROI roi=ROI(), int threads=0);
 
 
 

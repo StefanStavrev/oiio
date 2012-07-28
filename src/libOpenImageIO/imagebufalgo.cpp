@@ -1615,7 +1615,8 @@ contrast_impl (ImageBuf &R, const ImageBuf &A, float* contrast,
         for ( ; ! r.done(); r++) {
             a.pos (r.x(), r.y(), r.z());
             for (int i = 0; i < R.nchannels(); i++)
-                r[i] = clamp ((a[i] - pivot[i])*contrast[i] + pivot[i], 0.0f, 1.0f);
+                r[i] = clamp ((a[i] - pivot[i])*contrast[i] + pivot[i],
+                              0.0f, 1.0f);
         }
     } else {
         for ( ; ! r.done(); r++) {
@@ -1625,7 +1626,8 @@ contrast_impl (ImageBuf &R, const ImageBuf &A, float* contrast,
             float L = 0.299f*a[0] + 0.587f*a[1] + 0.114f*a[2];
 
             // Modify contrast for L to get the new luminance L_new.
-            float L_new = clamp ((L - pivot[0])*contrast[0] + pivot[0], 0.0f, 1.0f);
+            float L_new = clamp ((L - pivot[0])*contrast[0] + pivot[0],
+                                  0.0f, 1.0f);
 
             // Multiply the R, G and B components with L_new/L.
             float ratio = L_new/L;
@@ -1683,6 +1685,18 @@ ImageBufAlgo::contrast (ImageBuf &R, const ImageBuf &A,
         }
     }
 
+    // If luminance==true, A must have exactly 3 non-alpha and non-z channels.
+    if (luminance) {
+        int nchannels = A.nchannels() - (A.spec().alpha_channel >= 0)
+                                      - (A.spec().z_channel >= 0);
+        if (nchannels != 3) {
+            std::string err = std::string ("Input image must have ").append
+                              ("exactly 3 non-alpha and non-z channels");
+            R.error (err.c_str());
+            return false;
+        }
+    }
+
     // Are all the values in the pivot array valid, that is >= 0 and <= 1?
     for (int i = 0; i < A.nchannels(); i++) {
         if (pivot[i] < 0 || pivot[i] > 1) {
@@ -1692,26 +1706,14 @@ ImageBufAlgo::contrast (ImageBuf &R, const ImageBuf &A,
     }
 
     // If roi is not defined then initialize from R.
-    if (! roi.defined) {
+    if (! roi.defined)
         roi = get_roi (R.spec());
     // If roi is defined then clip to R's region.
-    } else {
+    else {
         roi = roi_intersection (roi, get_roi (R.spec()));
         if (! roi.defined) {
             std::string err = std::string ("Output image and region ").append
                               ("of interest don't have any common pixels");
-            R.error (err.c_str());
-            return false;
-        }
-    }
-
-    // A must have exactly 3 non-alpha and non-z channels.
-    if (luminance) {
-        int nchannels = A.nchannels() - (A.spec().alpha_channel >= 0)
-                                      - (A.spec().z_channel >= 0);
-        if (nchannels != 3) {
-            std::string err = std::string ("Input image must have ").append
-                              ("exactly 3 non-alpha and non-z channels");
             R.error (err.c_str());
             return false;
         }
