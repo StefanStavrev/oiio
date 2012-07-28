@@ -1640,6 +1640,7 @@ action_contrast (int argc, const char *argv[])
     ot.read ();
     ImageRecRef A (ot.pop());
     const ImageBuf &Aib ((*A)());
+    int channels_A = Aib.nchannels();
 
     // Output image.
     ImageSpec specR = Aib.spec();
@@ -1648,29 +1649,62 @@ action_contrast (int argc, const char *argv[])
     ImageBuf &Rib ((*ot.curimg)());
     
     // Get pivot and luminance from command line.
-    float pivot = 0.5f;
+    float pivot[channels_A];
     bool lum = false;
-    std::string cmd = argv[0];
-    size_t pos;
-    while ((pos = cmd.find_first_of(":")) != std::string::npos) {
-        cmd = cmd.substr (pos+1, std::string::npos);
-        if (Strutil::istarts_with(cmd,"lum="))
-            lum = (bool) atoi(cmd.c_str()+4);
-        else if (Strutil::istarts_with(cmd,"pivot="))
-            pivot = (float) atof(cmd.c_str()+6);
+    std::string cmd = argv[0], x;
+    size_t start, end;
+    int pivot_size=0, contrast_size;
+    while ((start = cmd.find_first_of(":")) != std::string::npos) {
+        cmd = cmd.substr (start+1, std::string::npos);
+        if ((end = cmd.find_first_of(":")) != std::string::npos)
+            x = cmd.substr (0, end);
+        else
+            x = cmd;
+
+        if (Strutil::istarts_with(x,"lum="))
+            lum = (bool) atoi(x.c_str()+4);
+        else if (Strutil::istarts_with(x,"pivot=")) {
+            x = x.substr (6, std::string::npos);
+            std::vector<std::string> pivot_values;
+            boost::split(pivot_values, x, boost::is_any_of(","));
+            pivot_size = pivot_values.size();
+            std::stringstream s;
+            s << pivot_size;
+            if (pivot_size != 1 && pivot_size != channels_A) {
+                std::string err = std::string ("The number of pivot ").append
+                    ("values must be 1 or ").append (s.str());
+                ot.error (argv[0], err);
+            }
+            if (pivot_size != 1 && lum == true) {
+                std::string err = std::string ("If lum==1 then exactly one").append
+                    ("pivot value must be specified");
+                ot.error (argv[0], err);
+            }
+            for (int i = 0; i < pivot_size; i++)
+                pivot[i] = (float) atof (pivot_values[i].c_str());
+        }
     }
 
-    // Get contrast values from command line.
+    // Get contrast from command line.
+    float contrast[channels_A];
     std::string contrast_string = argv[1];
     std::vector<std::string> contrast_values;
     boost::split(contrast_values, contrast_string, boost::is_any_of(","));
-    std::vector<float> contrast;
-    int contrast_values_size = contrast_values.size();
-    for (int i = 0; i < contrast_values_size; i++) {
-        contrast.push_back ((float) atof (contrast_values[i].c_str()));
+    contrast_size = contrast_values.size();
+    std::stringstream s;
+    s << contrast_size;
+    if (contrast_size != 1 && contrast_size != channels_A) {
+        std::string err = std::string ("The number of contrast ").append
+            ("values must be 1 or ").append (s.str());
+        ot.error (argv[0], err);
     }
-    if (contrast.size() == 1 && lum == false)
-        contrast.assign (Aib.nchannels(), contrast[0]);
+    if (contrast_size != 1 && lum == true) {
+        std::string err = std::string ("If lum==1 then exactly one").append
+            ("contrast value must be specified");
+        ot.error (argv[0], err);
+    }
+    for (int i = 0; i < contrast_size; i++)
+        contrast[i] = (float) atof (contrast_values[i].c_str());
 
     bool ok = ImageBufAlgo::contrast (Rib, Aib, contrast, lum, pivot);
     if (! ok)

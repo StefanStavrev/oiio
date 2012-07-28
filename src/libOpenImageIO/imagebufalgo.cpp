@@ -1597,8 +1597,8 @@ namespace { // anonymous namespace
 // Fully type-specialized version of ImageBufAlgo::contrast.
 template<class Rtype, class Atype>
 bool
-contrast_impl (ImageBuf &R, const ImageBuf &A, std::vector<float> contrast,
-               bool luminance, float pivot, ROI roi)
+contrast_impl (ImageBuf &R, const ImageBuf &A, float* contrast,
+               bool luminance, float* pivot, ROI roi)
 {
     // Double check types.
     if (R.spec().format != BaseTypeFromC<Rtype>::value ||
@@ -1615,7 +1615,7 @@ contrast_impl (ImageBuf &R, const ImageBuf &A, std::vector<float> contrast,
         for ( ; ! r.done(); r++) {
             a.pos (r.x(), r.y(), r.z());
             for (int i = 0; i < R.nchannels(); i++)
-                r[i] = clamp ((a[i] - pivot)*contrast[i] + pivot, 0.0f, 1.0f);
+                r[i] = clamp ((a[i] - pivot[i])*contrast[i] + pivot[i], 0.0f, 1.0f);
         }
     } else {
         for ( ; ! r.done(); r++) {
@@ -1625,7 +1625,7 @@ contrast_impl (ImageBuf &R, const ImageBuf &A, std::vector<float> contrast,
             float L = 0.299f*a[0] + 0.587f*a[1] + 0.114f*a[2];
 
             // Modify contrast for L to get the new luminance L_new.
-            float L_new = clamp ((L - pivot)*contrast[0] + pivot, 0.0f, 1.0f);
+            float L_new = clamp ((L - pivot[0])*contrast[0] + pivot[0], 0.0f, 1.0f);
 
             // Multiply the R, G and B components with L_new/L.
             float ratio = L_new/L;
@@ -1644,11 +1644,9 @@ contrast_impl (ImageBuf &R, const ImageBuf &A, std::vector<float> contrast,
 
 bool
 ImageBufAlgo::contrast (ImageBuf &R, const ImageBuf &A,
-                        std::vector<float> contrast, bool luminance,
-                        float pivot, ROI roi, int threads)
+                        float* contrast, bool luminance,
+                        float* pivot, ROI roi, int threads)
 {
-    int contrast_size = contrast.size();
-
     // Images R and A must have float pixel data.
     if (R.spec().format != TypeDesc::TypeFloat ||
         A.spec().format != TypeDesc::TypeFloat) {
@@ -1677,25 +1675,20 @@ ImageBufAlgo::contrast (ImageBuf &R, const ImageBuf &A,
         return false;
     }
 
-    // The contrast vector must have A.nchannels() elements.
-    if (contrast_size != A.nchannels() && contrast_size != 1) {
-        R.error ("The number of contrast values must be either 1 or %d",
-                  A.nchannels());
-        return false;
-    }
-
-    // Are all the values in the contrast vector valid, that is >= 0?
-    for (int i = 0; i < contrast_size; i++) {
+    // Are all the values in the contrast array valid, that is >= 0?
+    for (int i = 0; i < A.nchannels(); i++) {
         if (contrast[i] < 0) {
             R.error ("Contrast values must be non-negative");
             return false;
         }
     }
 
-    // Pivot must be in range 0->1.
-    if (pivot < 0 || pivot > 1) {
-        R.error ("Pivot must be a value between 0 and 1 inclusive");
-        return false;
+    // Are all the values in the pivot array valid, that is >= 0 and <= 1?
+    for (int i = 0; i < A.nchannels(); i++) {
+        if (pivot[i] < 0 || pivot[i] > 1) {
+            R.error ("Pivot values must be between 0 and 1 inclusive");
+            return false;
+        }
     }
 
     // If roi is not defined then initialize from R.
@@ -1712,21 +1705,14 @@ ImageBufAlgo::contrast (ImageBuf &R, const ImageBuf &A,
         }
     }
 
-    // Catch the bad cases when luminance == true.
+    // A must have exactly 3 non-alpha and non-z channels.
     if (luminance) {
-        // A must have exactly 3 non-alpha and non-z channels.
         int nchannels = A.nchannels() - (A.spec().alpha_channel >= 0)
                                       - (A.spec().z_channel >= 0);
         if (nchannels != 3) {
             std::string err = std::string ("Input image must have ").append
                               ("exactly 3 non-alpha and non-z channels");
             R.error (err.c_str());
-            return false;
-        }
-
-        // The contrast vector must have exactly one element.
-        if (contrast_size != 1) {
-            R.error ("Exactly one contrast value needs to be specified");
             return false;
         }
     }

@@ -436,8 +436,20 @@ bool DLLPUBLIC histogram_draw (ImageBuf &R,
 /// threads     - Number of threads.
 /// --------------------------------------------------------------------------
 bool DLLPUBLIC contrast (ImageBuf &R, const ImageBuf &A,
-                         std::vector<float> contrast, bool luminance=false,
+                         float contrast, bool luminance=false,
                          float pivot=0.5f, ROI roi=ROI(), int threads=0);
+
+bool DLLPUBLIC contrast (ImageBuf &R, const ImageBuf &A,
+                         float* contrast, bool luminance=false,
+                         float pivot=0.5f, ROI roi=ROI(), int threads=0);
+
+bool DLLPUBLIC contrast (ImageBuf &R, const ImageBuf &A,
+                         float contrast, bool luminance=false,
+                         float* pivot=NULL, ROI roi=ROI(), int threads=0);
+
+bool DLLPUBLIC contrast (ImageBuf &R, const ImageBuf &A,
+                         float* contrast, bool luminance=false,
+                         float* pivot=NULL, ROI roi=ROI(), int threads=0);
 
 
 
