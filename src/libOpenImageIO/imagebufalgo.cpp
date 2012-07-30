@@ -1589,5 +1589,176 @@ ImageBufAlgo::histogram_draw (ImageBuf &R,
     return true;
 }
 
+
+
+namespace { // anonymous namespace
+
+// Fully type-specialized version of ImageBufAlgo::contrast_stretch.
+template<class Rtype, class Atype>
+bool
+contrast_stretch_impl (ImageBuf &R, const ImageBuf &A,
+                       Range input_range, bool luminance,
+                       float min_out, float max_out,
+                       float below_min_in, float above_max_in,
+                       ROI roi)
+{
+    // Double check types.
+    if (R.spec().format != BaseTypeFromC<Rtype>::value ||
+        A.spec().format != BaseTypeFromC<Atype>::value) {
+        R.error ("Unsupported pixel data format combination '%s / %s'",
+                  R.spec().format, A.spec().format);
+        return false;
+    }
+
+    ImageBuf::ConstIterator<Atype, float> a (A);
+    ImageBuf::Iterator<Rtype, float> r (R, roi);
+
+    // Unpack input_range.
+    float min_in = input_range.min;
+    float max_in = input_range.max;
+
+    float ratio = (max_out - min_out + 1) / (max_in - min_in);
+    if (! luminance) {
+        for ( ; ! r.done(); r++) {
+            a.pos (r.x(), r.y(), r.z());
+            for (int i = 0; i < R.nchannels(); i++) {
+                if (a[i] >= min_in && a[i] < max_in)
+                    r[i] = min_out + (a[i]-min_in)*ratio;
+                else if (a[i] == max_in)
+                    r[i] = max_out;
+                else {
+                    if (a[i] < min_in)
+                        r[i] = below_min_in;
+                    else
+                        r[i] = above_max_in;
+                }
+            }
+        }
+    } else {
+        for ( ; ! r.done(); r++) {
+            a.pos (r.x(), r.y(), r.z());
+
+            // Compute luminance L.
+            float L = 0.299f*a[0] + 0.587f*a[1] + 0.114f*a[2];
+
+            // Modify contrast for L to get the new luminance L_new.
+            float L_new;
+            if (L >= min_in && L < max_in)
+                L_new = min_out + (L-min_in)*ratio;
+            else if (L == max_in)
+                L_new = max_out;
+            else {
+                if (L < min_in)
+                    L_new = below_min_in;
+                else
+                    L_new = above_max_in;
+            }
+
+            // Multiply the R, G and B components with L_new/L.
+            float ratio = L_new/L;
+            r[0] = clamp (a[0] * ratio, 0.0f, 1.0f);
+            r[1] = clamp (a[1] * ratio, 0.0f, 1.0f);
+            r[2] = clamp (a[2] * ratio, 0.0f, 1.0f);
+        }
+    }
+
+    return true;
+}
+
+} // anonymous namespace
+
+
+
+bool
+ImageBufAlgo::contrast_stretch (ImageBuf &R, const ImageBuf &A,
+                                float min_in, float max_in, bool luminance,
+                                float min_out, float max_out,
+                                float below_min_in, float above_max_in,
+                                ROI roi, int threads)
+{
+    // Images R and A must have float pixel data.
+    if (R.spec().format != TypeDesc::TypeFloat ||
+        A.spec().format != TypeDesc::TypeFloat) {
+        R.error ("Unsupported pixel data format combination '%s / %s'",
+                  R.spec().format, A.spec().format);
+        return false;
+    }
+
+    // Initialize output image R from input image A if needed.
+    if (! R.initialized()) {
+        ImageSpec newspec = A.spec();
+        newspec.set_format (TypeDesc::FLOAT);
+        R.reset ("dummy", newspec);
+    } else {
+        if (R.nchannels() != A.nchannels()) {
+            std::string err = "Input and output image must have the same ";
+            err.append ("number of channels");
+            R.error (err.c_str());
+            return false;
+        }
+    }
+
+    // Input image A must have at least one channel.
+    if (A.nchannels() < 1) {
+        R.error ("Input image must have at least 1 channel");
+        return false;
+    }
+
+    // Is the input range valid?
+    if (min_in >= max_in) {
+        R.error (
+        "Invalid input range, min_in must be strictly smaller than max_in");
+        return false;
+    }
+
+    // If luminance==true, A must have exactly 3 non-alpha and non-z channels.
+    if (luminance) {
+        int nchannels = A.nchannels() - (A.spec().alpha_channel >= 0)
+                                      - (A.spec().z_channel >= 0);
+        if (nchannels != 3) {
+            std::string err = std::string ("Input image must have ").append
+                              ("exactly 3 non-alpha and non-z channels");
+            R.error (err.c_str());
+            return false;
+        }
+    }
+
+    // Is the output range valid?
+    if (min_out >= max_out) {
+        std::string err = "Invalid output range, min_out must be strictly ";
+        err.append ("smaller than max_out");
+        R.error (err.c_str());
+        return false;
+    }
+
+    // If roi is not defined then initialize from R.
+    if (! roi.defined)
+        roi = get_roi (R.spec());
+    // If roi is defined then clip to R's region.
+    else {
+        roi = roi_intersection (roi, get_roi (R.spec()));
+        if (! roi.defined) {
+            std::string err = "Output image and region of interest don't ";
+            err.append ("have any common pixels");
+            R.error (err.c_str());
+            return false;
+        }
+    }
+
+    // boost::bind can bind functions with at most 9 arguments, and
+    // contrast_stretch_impl has 10. To lower the number of arguments,
+    // we use struct Range to pack 2 values in 1 and therefore reduce
+    // the number of arguments from 10 to 9.
+    Range input_range = {min_in, max_in};
+    ImageBufAlgo::parallel_image (boost::bind (
+                                  contrast_stretch_impl<float,float>,
+                                  boost::ref(R), boost::cref(A),
+                                  input_range, luminance, min_out, max_out,
+                                  below_min_in, above_max_in, _1),
+                    roi, threads);
+
+    return ! R.has_error();
+}
+
 }
 OIIO_NAMESPACE_EXIT

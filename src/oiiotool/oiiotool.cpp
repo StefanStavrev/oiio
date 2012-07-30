@@ -1614,6 +1614,88 @@ action_histogram (int argc, const char *argv[])
 
 
 
+/// action_contrast_stretch --------------------------------------------------
+/// Usage:              ./oiiotool in --contrast_stretch:lum=int:min_out=float
+///                     :max_out=float:below_min_in=float:above_max_in=float
+///                     min_in max_in -o out
+///
+/// in                  - Input image whose contrast will be modified.
+/// min_in, max_in      - Input range of pixel values in the input image.
+/// min_out, max_out    - New output range to which the input range was mapped
+///                       to. Default values are 0 and 1.
+/// below_min_in        - Pixel values below min_in are mapped to this value,
+///                       which is 0 by default.
+/// above_max_in        - Pixel values above max_in are mapped to this value,
+///                       which is 1 by default.
+/// lum                 - If 0(default), then contrast is modified for all
+///                       channels. If 1, the first 3 channels are assumed RGB
+///                       and contrast is modified for the luminance channel.
+/// out                 - Output image with modified contrast.
+///
+/// Examples:
+/// 1. ./oiiotool in --contrast_stretch 0.2 0.8 -o out
+/// 2. ./oiiotool in --contrast_stretch:min_out=0.2:max_out=0.9 0.2 0.8 -o out
+/// 3. ./oiiotool in --contrast_stretch:min_out=0.2:max_out=0.9:lum=1
+///    0.2 0.8 -o out
+/// 4. ./oiiotool in --contrast_stretch:min_out=0.2:max_out=0.9
+///    :below_min_in=0.1:above_max_in=0.9 0.2 0.8 -o out
+/// --------------------------------------------------------------------------
+static int
+action_contrast_stretch (int argc, const char *argv[])
+{
+    if (ot.postpone_callback (1, action_contrast_stretch, argc, argv))
+        return 0;
+
+    // Input image.
+    ot.read ();
+    ImageRecRef A (ot.pop());
+    const ImageBuf &Aib ((*A)());
+
+    // Output image.
+    ImageSpec specR = Aib.spec();
+    specR.set_format (TypeDesc::FLOAT);
+    ot.push (new ImageRec ("irec", specR, ot.imagecache));
+    ImageBuf &Rib ((*ot.curimg)());
+
+    // Get optional arguments from command line.
+    float min_out=0, max_out=1, below_min_in=0, above_max_in=1;
+    bool lum = false;
+    std::string cmd = argv[0];
+    size_t pos;
+    while ((pos = cmd.find_first_of (":")) != std::string::npos) {
+        cmd = cmd.substr (pos+1, std::string::npos);
+
+        if (Strutil::istarts_with (cmd, "lum=")) {
+            lum = (bool) atoi (cmd.c_str() + 4);
+        } else if (Strutil::istarts_with (cmd, "min_out=")) {
+            min_out = (float) atof (cmd.c_str() + 8);
+        } else if (Strutil::istarts_with (cmd, "max_out=")) {
+            max_out = (float) atof (cmd.c_str() + 8);
+        } else if (Strutil::istarts_with (cmd, "below_min_in=")) {
+            below_min_in = (float) atof (cmd.c_str() + 13);
+        } else if (Strutil::istarts_with (cmd, "above_max_in=")) {
+            above_max_in = (float) atof (cmd.c_str() + 13);
+        } else {
+            ot.error (argv[0], "Unknown optional argument");
+            return 0;
+        }
+    }
+
+    // Get non-optional arguments from command line.
+    float min_in = (float) atof (argv[1]);
+    float max_in = (float) atof (argv[2]);
+
+    bool ok = ImageBufAlgo::contrast_stretch (Rib, Aib, min_in, max_in, lum,
+                                              min_out, max_out,
+                                              below_min_in, above_max_in);
+    if (! ok)
+        ot.error (argv[0], Rib.geterror());
+
+    return 0;
+}
+
+
+
 static void
 getargs (int argc, char *argv[])
 {
@@ -1686,6 +1768,7 @@ getargs (int argc, char *argv[])
                 "--abs %@", action_abs, NULL, "Take the absolute value of the image pixels",
                 "--over %@", action_over, NULL, "'Over' composite of two images",
                 "--histogram %@ %s %d", action_histogram, NULL, NULL, "Histogram one channel (args: cumulative=0)",
+                "--contrast_stretch %@ %g %g", action_contrast_stretch, NULL, NULL, "Stretch contrast",
                 "--flip %@", action_flip, NULL, "Flip the image vertically (top<->bottom)",
                 "--flop %@", action_flop, NULL, "Flop the image horizontally (left<->right)",
                 "--flipflop %@", action_flipflop, NULL, "Flip and flop the image (180 degree rotation)",

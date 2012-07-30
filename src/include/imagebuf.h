@@ -107,6 +107,12 @@ void set_roi_full (ImageSpec &spec, const ROI &newroi);
 
 
 
+struct Range {
+    float min, max;
+};
+
+
+
 /// An ImageBuf is a simple in-memory representation of a 2D image.  It
 /// uses ImageInput and ImageOutput underneath for its file I/O, and has
 /// simple routines for setting and getting individual pixels, that

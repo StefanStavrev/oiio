@@ -404,6 +404,26 @@ bool DLLPUBLIC histogram_draw (ImageBuf &R,
 
 
 
+/// ImageBufAlgo::contrast_stretch -------------------------------------------
+/// Parameters:
+/// R                   -
+/// A                   -
+/// min_in, max_in      -
+/// min_out, max_out    -
+/// below_min_in        -
+/// above_max_in        -
+/// roi                 -
+/// threads             -
+/// --------------------------------------------------------------------------
+bool DLLPUBLIC contrast_stretch (ImageBuf &R, const ImageBuf &A,
+                                 float min_in, float max_in,
+                                 bool luminance=false,
+                                 float min_out=0, float max_out=1,
+                                 float below_min_in=0, float above_max_in=1,
+                                 ROI roi=ROI(), int threads=0);
+
+
+
 /// Helper template for generalized multithreading for image processing
 /// functions.  Some function/functor f is applied to every pixel the
 /// region of interest roi, dividing the region into multiple threads if
